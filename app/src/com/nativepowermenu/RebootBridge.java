@@ -75,9 +75,18 @@ final class RebootBridge {
      * Runs inside system_server. {@code IPowerManager.reboot} is called by the system process
      * itself, which always passes the platform's own permission checks - the same path
      * {@code StatusBarManagerService} and {@code ShutdownThread} use.
+     *
+     * <p><b>The {@code clearCallingIdentity()} is essential.</b> This runs while the current thread
+     * is still servicing SystemUI's binder call into system_server, and a nested same-process call
+     * inherits that thread's calling identity - without clearing it,
+     * {@code PowerManagerService$BinderService.reboot} sees uid 10237 (SystemUI) and throws
+     * {@code SecurityException: Neither user 10237 nor current process has
+     * android.permission.REBOOT}. ColorOS' own {@code StatusBarManagerService.reboot} clears the
+     * identity for exactly the same reason.
      */
     static boolean reboot(String reason, ClassLoader classLoader) {
         ModuleLog.d("system_server: rebooting to " + reason);
+        long identity = Binder.clearCallingIdentity();
         try {
             Object binder = XposedHelpers.callStaticMethod(
                     XposedHelpers.findClass("android.os.ServiceManager", classLoader),
@@ -87,12 +96,15 @@ final class RebootBridge {
                     "asInterface", binder);
             // Resolved by exact signature: the arguments are primitives, and callMethod() would
             // have to rely on autoboxing-aware matching to find it.
+            // wait=false, so this returns as soon as the shutdown is scheduled.
             XposedHelpers.findMethodExact(powerManager.getClass(), "reboot",
                             boolean.class, String.class, boolean.class)
                     .invoke(powerManager, false, reason, false);
             return true;
         } catch (Throwable t) {
             ModuleLog.e("system_server: reboot(" + reason + ") failed", t);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
         }
         return false;
     }

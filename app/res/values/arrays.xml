@@ -3,11 +3,15 @@
     <!--
       Default LSPosed scope.
         com.android.systemui - hosts the power menu itself.
-        android (system framework / system_server) - needed for the extended bootloader and
-        recovery entries, because only the system process may reboot with a custom reason.
+        system / android     - the system process. Both names are listed because LSPosed exposes
+                               them as separate entries in the scope picker and only the system
+                               process may reboot with a custom reason (android.permission.REBOOT).
+                               Verified on device: with "system" selected, the module is injected
+                               into system_server.
     -->
     <string-array name="xposed_scope" translatable="false">
         <item>com.android.systemui</item>
         <item>android</item>
+        <item>system</item>
     </string-array>
 </resources>

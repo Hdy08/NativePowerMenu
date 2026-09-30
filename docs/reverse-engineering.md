@@ -330,20 +330,65 @@ public void reboot(final boolean safeMode) {
 ```
 SystemUI                                      system_server
   GlobalActionsComponent.mBarService
-  IStatusBarService.setIcon("native_power_menu:recovery", "", 0, 0, null)
+  IStatusBarService.getDisableFlags(null, 0x4E504D01|2)
         │
-        └────────────── binder ──────────────▶  StatusBarManagerService.setIcon(...)
-                                                 └─ 钩子识别 magic 前缀
-                                                    ├─ param.setResult(null)   // 吞掉，不污染图标表
-                                                    └─ IPowerManager.reboot(false, reason, false)
+        └────────────── binder ──────────────▶  StatusBarManagerService.getDisableFlags(...)
+                                                 └─ 钩子识别 magic userId
+                                                    ├─ Binder.clearCallingIdentity()   ← 关键
+                                                    ├─ IPowerManager.reboot(false, reason, false)
+                                                    └─ setResult(new int[]{ACK|NAK})
 ```
 
-选 `setIcon(String,String,int,int,String)` 的原因：现代 Android 里它已经是空壳
-（只做图标记账），但签名里有 String 可以承载 reason，且被 `STATUS_BAR_SERVICE` 保护
-——这个权限只有 SystemUI 有。system_server 侧再对 reason 做白名单（只认
-`recovery` / `bootloader`）。
+**为什么用 `getDisableFlags(IBinder, int)` 而不是 `setIcon(...)`：它有返回值。**
+最初的版本用废弃的 `setIcon` 当载体，静默失败时 SystemUI 完全无从判断 —— 实测就是
+「确定之后毫无反应」。现在 system_server 用 `int[]` 回一个 `ACK`/`NAK`，
+SystemUI 据此区分「对面根本没加载」和「重启本身失败」，失败时能直接提示用户去勾作用域。
+未挂钩时真实的 `getDisableFlags(null, 任意大 userId)` 匹配不到记录，返回 `{0,0}`，无副作用；
+被 `STATUS_BAR` 保护，而 SystemUI 持有它。
 
-系统进程调用 `IPowerManager.reboot` 的权限是天然满足的：
-`ActivityManager.checkComponentPermission` 对 `Process.SYSTEM_UID` 直接返回 GRANTED。
+### 踩到的坑：嵌套 binder 调用会继承外层的 calling uid
+
+第一版实现在真机上失败了，LSPosed 日志给出了完整堆栈：
+
+```
+Caused by: java.lang.SecurityException: Neither user 10237 nor current process has
+        android.permission.REBOOT.
+    at android.app.ContextImpl.enforceCallingOrSelfPermission(ContextImpl.java:2521)
+    at com.android.server.power.PowerManagerService$BinderService.reboot(PowerManagerService.java:7686)
+```
+
+钩子是在**正在处理 SystemUI 那个 binder 调用**的线程上被触发的，此时线程的
+`mCallingUid` 还是 10237（SystemUI），而 system_server 内部再发起一次同进程 binder 调用时
+把这个身份带了过去，于是 `PowerManagerService` 认为调用方是 SystemUI。
+
+修法是标准的 `Binder.clearCallingIdentity()`：
+
+```java
+long identity = Binder.clearCallingIdentity();   // mCallingUid = getuid() = 1000
+try { ...IPowerManager.reboot(...)... } finally { Binder.restoreCallingIdentity(identity); }
+```
+
+ColorOS 自己的 `StatusBarManagerService.reboot(boolean)` 在调 `ShutdownThread` 之前
+也是这么做的，原因完全一样。
+
+清掉身份之后权限检查确实会过，这一点在设备字节码里核对过：
+
+```java
+// android.app.ActivityManager
+public static boolean canAccessUnexportedComponents(int uid) {
+    int appId = UserHandle.getAppId(uid);
+    return appId == 0 || appId == 1000;          // root / system
+}
+public static int checkComponentPermission(String permission, int uid, ...) {
+    if (canAccessUnexportedComponents(uid)) return PERMISSION_GRANTED;
+    ...
+}
+```
+
+### 作用域名字
+
+LSPosed 作用域选择器里 system_server 对应的是包名 `system`（不是 `android`）；
+实测勾选 `system` 后模块才会被注入系统进程，日志里表现为行首的 `(system)`。
+模块的 `xposed_scope` 现在把 `android` 和 `system` 都列上了。
 
 
