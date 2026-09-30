@@ -1,9 +1,11 @@
 package com.nativepowermenu;
 
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.widget.Toast;
@@ -166,31 +168,74 @@ final class PowerMenuActions {
      */
     private void rebootTo(String reason) {
         if (RebootClient.reboot(mManager, reason)) {
-            ModuleLog.d("asked the system process to reboot to " + reason);
+            ModuleLog.d("system_server acknowledged the reboot to " + reason);
             return;
         }
-        ModuleLog.e("could not request a reboot to " + reason
-                + " (is the module scoped to the system framework too?)", null);
+        ModuleLog.e("the system process did not answer the reboot request for " + reason
+                + " - the module is probably not scoped to the system framework", null);
         try {
             Toast.makeText(mContext,
                     ModuleResources.string(mContext, R.string.reboot_unavailable,
-                            "Reboot is unavailable - enable the module for the system framework"),
+                            "Reboot failed - enable the module for the system framework"),
                     Toast.LENGTH_LONG).show();
         } catch (Throwable ignored) {
             // Toasts are best-effort only.
         }
     }
 
+    /**
+     * AOSP launches the emergency dialer through {@code TelecomManager}, because
+     * {@code ACTION_EMERGENCY_ASSISTANCE} has no handler on ColorOS (verified in the LSPosed log:
+     * {@code ActivityNotFoundException}). The dialer is also reachable through its well-known
+     * component and, failing that, by pre-filling the GSM emergency number.
+     */
     private void startEmergencyDialer() {
+        if (startEmergencyDialerViaTelecom()) {
+            return;
+        }
+        if (startActivitySafely(new Intent(Intent.ACTION_DIAL)
+                .setComponent(new ComponentName(
+                        "com.android.phone", "com.android.phone.EmergencyDialer"))
+                .putExtra("com.android.phone.EmergencyDialer.extra.ENTRY_TYPE", 2))) {
+            return;
+        }
+        if (startActivitySafely(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:112")))) {
+            return;
+        }
+        ModuleLog.e("emergency dialer failed: no handler for the emergency dialer", null);
+    }
+
+    private boolean startEmergencyDialerViaTelecom() {
         try {
-            // Intent.ACTION_EMERGENCY_ASSISTANCE is hidden in the public SDK.
-            Intent intent = new Intent("android.intent.action.EMERGENCY_ASSISTANCE");
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                    | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
-                    | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            mContext.startActivity(intent);
+            Object telecom = mContext.getSystemService(Context.TELECOM_SERVICE);
+            if (telecom == null) {
+                return false;
+            }
+            // TelecomManager.createLaunchEmergencyDialerIntent is hidden in the public SDK.
+            Method create = XposedHelpers.findMethodExact(
+                    telecom.getClass(), "createLaunchEmergencyDialerIntent", String.class);
+            Intent intent = (Intent) create.invoke(telecom, (Object) null);
+            if (intent == null) {
+                return false;
+            }
+            intent.putExtra("com.android.phone.EmergencyDialer.extra.ENTRY_TYPE", 2);
+            return startActivitySafely(intent);
         } catch (Throwable t) {
-            ModuleLog.e("emergency dialer failed", t);
+            ModuleLog.w("TelecomManager emergency dialer unavailable: " + t);
+            return false;
+        }
+    }
+
+    private boolean startActivitySafely(Intent intent) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        try {
+            mContext.startActivity(intent);
+            return true;
+        } catch (Throwable t) {
+            ModuleLog.w("could not start " + intent + ": " + t);
+            return false;
         }
     }
 

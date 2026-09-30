@@ -1,30 +1,37 @@
 package com.nativepowermenu;
 
 import android.os.Binder;
+import android.os.IBinder;
 
 import de.robv.android.xposed.XposedHelpers;
 
 /**
  * The two ends of the reboot-with-reason channel.
  *
- * <p>Why a channel at all: {@code PowerManager.reboot(String)} is guarded by
- * {@code android.permission.REBOOT}, and SystemUI does not hold it (verified with
- * {@code dumpsys package com.android.systemui} - the permission is not even requested). Only the
- * system process may reboot with a custom reason, which is exactly how ColorOS' own
- * {@code StatusBarManagerService.reboot(boolean)} works.
+ * <p>Why a channel at all: {@code PowerManagerService.reboot()} enforces
+ * {@code android.permission.REBOOT} (and {@code RECOVERY} for the recovery reason), and SystemUI
+ * holds neither - it does not even request them. Only the system process may reboot with a custom
+ * reason, which is exactly how ColorOS' own {@code StatusBarManagerService.reboot(boolean)} works.
  *
- * <p>So the module also runs in system_server and uses
- * {@code StatusBarManagerService.setIcon(String slot, ...)} as a private carrier. That method is
- * dead in modern Android (it only logs a deprecation warning), SystemUI already holds the
- * {@code IStatusBarService} binder it lives behind, and it is protected by
- * {@code STATUS_BAR_SERVICE} - a permission only SystemUI has. The hook recognises a magic
- * {@code slot} prefix, swallows the call before the real icon bookkeeping happens, and performs the
- * reboot instead.
+ * <p>So the module also runs in system_server, and the request travels over
+ * {@code IStatusBarService.getDisableFlags(IBinder token, int userId)}. That method is chosen
+ * because it <em>returns</em> an {@code int[]}: the system side answers with {@link #ACK}, so
+ * SystemUI can tell "the module is loaded there" from "nobody is listening" instead of failing
+ * silently. Called with a null token and a magic {@code userId} the real implementation matches no
+ * record and returns {@code {0, 0}}, so an unhooked system_server sees no side effect at all.
  */
 final class RebootBridge {
 
-    /** Magic prefix that turns a status-bar icon slot into a reboot request. */
-    static final String TOKEN_PREFIX = "native_power_menu:";
+    /** Magic {@code userId} range. Real calls only ever pass real user/display ids. */
+    private static final int REQUEST_BASE = 0x4E504D00;
+
+    private static final int REQUEST_RECOVERY = REQUEST_BASE | 1;
+    private static final int REQUEST_BOOTLOADER = REQUEST_BASE | 2;
+
+    /** First element of the returned array: the system side handled the request successfully. */
+    static final int ACK = 0x4E504D01;
+    /** The system side was reached but the reboot itself failed. */
+    static final int NAK = 0x4E504D02;
 
     static final String REASON_RECOVERY = "recovery";
     static final String REASON_BOOTLOADER = "bootloader";
@@ -32,20 +39,33 @@ final class RebootBridge {
     private RebootBridge() {
     }
 
-    static String token(String reason) {
-        return TOKEN_PREFIX + reason;
+    static String methodName() {
+        return "getDisableFlags";
     }
 
-    /** Returns {@code null} unless {@code token} is one of our own, well-known requests. */
-    static String reasonFromToken(String token) {
-        if (token == null || !token.startsWith(TOKEN_PREFIX)) {
-            return null;
+    /** The exact signature the client resolves on the binder proxy. */
+    static Class<?>[] methodSignature() {
+        return new Class<?>[]{IBinder.class, int.class};
+    }
+
+    static int requestCode(String reason) {
+        if (REASON_RECOVERY.equals(reason)) {
+            return REQUEST_RECOVERY;
         }
-        String reason = token.substring(TOKEN_PREFIX.length());
-        if (REASON_RECOVERY.equals(reason) || REASON_BOOTLOADER.equals(reason)) {
-            return reason;
+        if (REASON_BOOTLOADER.equals(reason)) {
+            return REQUEST_BOOTLOADER;
         }
-        ModuleLog.w("ignoring unsupported reboot reason '" + reason + "'");
+        return -1;
+    }
+
+    /** Returns {@code null} unless {@code code} is one of our own, well-known requests. */
+    static String reasonFromRequestCode(int code) {
+        if (code == REQUEST_RECOVERY) {
+            return REASON_RECOVERY;
+        }
+        if (code == REQUEST_BOOTLOADER) {
+            return REASON_BOOTLOADER;
+        }
         return null;
     }
 
@@ -65,8 +85,11 @@ final class RebootBridge {
             Object powerManager = XposedHelpers.callStaticMethod(
                     XposedHelpers.findClass("android.os.IPowerManager$Stub", classLoader),
                     "asInterface", binder);
-            XposedHelpers.callMethod(powerManager, "reboot",
-                    Boolean.FALSE, reason, Boolean.FALSE);
+            // Resolved by exact signature: the arguments are primitives, and callMethod() would
+            // have to rely on autoboxing-aware matching to find it.
+            XposedHelpers.findMethodExact(powerManager.getClass(), "reboot",
+                            boolean.class, String.class, boolean.class)
+                    .invoke(powerManager, false, reason, false);
             return true;
         } catch (Throwable t) {
             ModuleLog.e("system_server: reboot(" + reason + ") failed", t);

@@ -30,5 +30,5 @@
     <string name="reboot_recovery_confirm">确定要重启到恢复模式（Recovery）吗？</string>
     <string name="reboot_confirm_ok">确定</string>
     <string name="reboot_confirm_cancel">取消</string>
-    <string name="reboot_unavailable">无法重启：请在 LSPosed 里把本模块的作用域加上「系统框架」</string>
+    <string name="reboot_unavailable">重启失败：请在 LSPosed 中把本模块的作用域加上「系统框架（android）」，再重启手机</string>
 </resources>

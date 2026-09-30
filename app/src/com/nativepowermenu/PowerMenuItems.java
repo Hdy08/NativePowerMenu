@@ -74,9 +74,9 @@ final class PowerMenuItems {
         try {
             switch (key) {
                 case BOOTLOADER:
-                    return context.getDrawable(R.drawable.ic_bootloader);
+                    return moduleDrawable(context, R.drawable.ic_bootloader);
                 case RECOVERY:
-                    return context.getDrawable(R.drawable.ic_recovery);
+                    return moduleDrawable(context, R.drawable.ic_recovery);
                 default:
                     int id = frameworkIconId(context.getResources(), key);
                     return id != 0 ? context.getDrawable(id) : null;
@@ -84,6 +84,24 @@ final class PowerMenuItems {
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /**
+     * Resolves one of the module's own drawables.
+     *
+     * <p>This has to go through {@link ModuleResources} whenever the host is not the module's own
+     * process: {@code R.drawable.ic_bootloader} is an id in the module's resource table, and handing
+     * it to SystemUI's {@code Resources} looks up an unrelated entry (or throws) instead.
+     */
+    private static Drawable moduleDrawable(Context context, int resId) {
+        if (ModuleResources.PACKAGE_NAME.equals(context.getPackageName())) {
+            try {
+                return context.getDrawable(resId);
+            } catch (Throwable ignored) {
+                // Fall through to the module resources path below.
+            }
+        }
+        return ModuleResources.drawable(context, resId);
     }
 
     // ---------------------------------------------------------------- text

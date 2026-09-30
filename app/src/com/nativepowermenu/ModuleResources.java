@@ -67,7 +67,9 @@ final class ModuleResources {
             return null;
         }
         try {
-            return resources.getDrawable(resId, hostContext.getTheme());
+            // No theme: the host's theme belongs to a different Resources, and these drawables have
+            // no theme attributes anyway.
+            return resources.getDrawable(resId, null);
         } catch (Throwable t) {
             ModuleLog.w("could not resolve module drawable 0x" + Integer.toHexString(resId), t);
             return null;
