@@ -29,18 +29,23 @@ final class SystemServerHook {
         int count = XposedBridge.hookAllMethods(service, METHOD_CARRIER, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
-                if (param.args == null || param.args.length != 5
-                        || !(param.args[0] instanceof String)) {
-                    return;
+                try {
+                    if (param.args == null || param.args.length != 5
+                            || !(param.args[0] instanceof String)) {
+                        return;
+                    }
+                    String reason = RebootBridge.reasonFromToken((String) param.args[0]);
+                    if (reason == null) {
+                        return;
+                    }
+                    // Swallow the carrier call so no status-bar icon bookkeeping happens.
+                    param.setResult(null);
+                    ModuleLog.d("reboot request from uid " + RebootBridge.callingUid());
+                    RebootBridge.reboot(reason, mClassLoader);
+                } catch (Throwable t) {
+                    // Never let the carrier path hurt system_server.
+                    ModuleLog.e("system_server: carrier hook failed", t);
                 }
-                String reason = RebootBridge.reasonFromToken((String) param.args[0]);
-                if (reason == null) {
-                    return;
-                }
-                // Swallow the carrier call so no status-bar icon bookkeeping happens.
-                param.setResult(null);
-                ModuleLog.d("reboot request from uid " + RebootBridge.callingUid());
-                RebootBridge.reboot(reason, mClassLoader);
             }
         }).size();
 

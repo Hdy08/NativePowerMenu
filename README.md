@@ -1,8 +1,7 @@
 # NativePowerMenu
 
-把 ColorOS / Oplus（一加、OPPO、realme）的电源菜单**恢复成原生 Android（AOSP）样式**的 LSPosed 模块。
-
-模块只作用于 `com.android.systemui`，不碰系统服务、不碰 framework，功能边界就是「长按电源键弹出的那个菜单」。
+把 ColorOS / Oplus（一加、OPPO、realme）的电源菜单**恢复成原生 Android（AOSP）样式**的 LSPosed 模块，
+并在原生菜单上补上「引导模式 / 恢复模式」两个扩展项。
 
 ```
 长按电源键
@@ -11,21 +10,32 @@
                └── CommandQueue → GlobalActionsComponent.handleShowGlobalActionsMenu()
                      └── GlobalActions 插件 (GlobalActionsImpl)
                            ├── ColorOS: OplusGlobalActionsDialog  ←  自绘的 ShutdownView
-                           └── 本模块 : AOSP 风格的图标网格 + 文案
+                           └── 本模块 : 直接 inflate AOSP 原版的 global_actions_grid_lite
 ```
 
 ## 效果
 
-- 用 AOSP 的 `global_actions_grid_lite` 结构渲染：居中的圆角面板 + 圆形按钮 + 下方文字。
-- 尺寸、颜色、字号全部从设备自身的 `com.android.systemui` 资源里按名字读取
-  （`global_actions_button_size`、`global_actions_lite_background`、`global_actions_corner_radius` …），
-  因此会跟随系统主题和 ColorOS 的版本变化。
-- 图标与文案取自 `framework-res`（`android:drawable/ic_lock_power_off`、`ic_restart`、
-  `ic_screenshot`、`ic_lock_lockdown`、`emergency_icon` 以及对应的 `global_action_*` 字符串），
-  会自动跟随系统语言。
-- 菜单项沿用 AOSP 的 `config_globalActionsList` 顺序：紧急 / 锁定 / 关机 / 重启 / 截屏。
+**不是自绘的近似，而是 AOSP 原版布局。** 这一点是逆向时发现的：
 
-功能与 AOSP 完全一致：
+设备自己的 `SystemUI.apk` 里仍然原封不动地躺着 AOSP 的
+`res/layout/global_actions_grid_lite.xml`、`global_actions_grid_item_lite.xml`、
+`res/drawable/global_actions_lite_background.xml` 等资源，只是 ColorOS 把整条调用链换成了
+`OplusShutdownView`，这些资源再也没人引用。模块现在直接 inflate 它们，并像
+`GlobalActionsLayoutLite.onUpdateList()` 那样，把每个 `GlobalActionsItem` 交给
+`ConstraintLayout` 的 `Flow` 排布。
+
+因此布局、`GlobalActionsItem` 的按压反馈、dimen、颜色、主题**全部来自设备本身**：
+
+- 面板背景 `global_actions_lite_background` + 圆角 `global_actions_corner_radius`
+- 圆形按钮 `global_actions_lite_button` / `global_actions_button_size` / `_button_padding`
+- 文字 14sp + `global_actions_lite_text`，列数取 `power_menu_lite_max_columns`
+- 图标与文案取自 `framework-res`（`ic_lock_power_off`、`ic_restart`、`ic_screenshot`、
+  `ic_lock_lockdown`、`emergency_icon` 以及对应的 `global_action_*` 字符串），自动跟随系统语言
+
+> 顺带对比过 HyperOS 提取出来的 `系统界面_16.03.251211.r.apk`：它那份 `global_actions_grid_lite.xml`
+> 与 ColorOS 自带的**逐字节相同**（只差一个 `android:clipChildren`），所以用设备自己那份最准。
+
+菜单项顺序沿用 AOSP 的 `config_globalActionsList`，功能与 AOSP 完全一致：
 
 | 菜单项 | 行为 | 长按 |
 | --- | --- | --- |
@@ -35,18 +45,37 @@
 | 紧急 | `android.intent.action.EMERGENCY_ASSISTANCE` | – |
 | 锁定 | `LockPatternUtils.requireStrongAuth()` + `IWindowManager.lockNow()` | – |
 
+### 扩展项
+
+| 菜单项 | 行为 |
+| --- | --- |
+| 引导模式 | 确认后 `PowerManager.reboot("bootloader")` |
+| 恢复模式 | 确认后 `PowerManager.reboot("recovery")` |
+
+这两项**不是 AOSP 自带的**，所以点击后先弹一个 `SystemUIDialog` 确认，避免误触。
+
+难点在于权限：SystemUI **没有** `android.permission.REBOOT`（`dumpsys package com.android.systemui`
+里连申请都没有），而 `PowerManager.reboot(String)` 是在 system_server 里做权限检查的。
+所以模块同时注入 `android` 进程，并借用一个已经废弃的 binder 方法
+`IStatusBarService.setIcon(String slot, …)` 当私有通道：SystemUI 用带 magic 前缀的 slot 调它，
+system_server 侧的钩子识别前缀、吞掉这次调用（不会污染状态栏图标表），
+再以系统进程身份调用 `IPowerManager.reboot` —— 这条路正是 ColorOS 自己的
+`StatusBarManagerService.reboot(boolean)` 走的路，权限天然满足。
+
 ## 环境要求
 
 - Android 12+（`minSdk 31`），已在 **OnePlus PJZ110 / ColorOS 16.0.5.703 (Android 16, SDK 36)** 上验证。
 - LSPosed（含 Zygisk / 内置版本均可）已激活。
-- 作用域只需要勾选 **系统界面（com.android.systemui）**。
+- 作用域：**系统界面（com.android.systemui）** 必选；**系统框架（android）** 用于引导/恢复模式
+  （不加也能用，只是这两个扩展项会提示不可用）。
 
 ## 安装
 
 1. 安装 `build/NativePowerMenu.apk`。
 2. 打开 LSPosed 管理器 → 模块 → 启用「原生电源菜单」。
-3. 作用域勾选「系统界面」。
+3. 作用域勾选「系统界面」，需要扩展项的话再勾上「系统框架」。
 4. 重启 SystemUI（或重启手机）。
+
 
 ## 构建
 
@@ -81,6 +110,8 @@ platform 32 / platform 36 的 `android.jar`。路径都可以用环境变量覆�
 ```
 app/AndroidManifest.xml    模块清单（xposedmodule / xposedscope）
 app/assets/xposed_init     入口类
+app/assets/xposed_scope    默认作用域：com.android.systemui + android
+app/res/drawable/          扩展项的两个矢量图标（其余资源都用设备自带的）
 app/src/.../               模块源码
 build.sh                   无 Gradle 构建脚本
 tools/fetch-deps.sh        拉取编译期依赖
@@ -90,6 +121,7 @@ docs/reverse-engineering.md ColorOS 电源菜单逆向记录
 ## 卸载
 
 在 LSPosed 里停用模块并重启 SystemUI 即可；ColorOS 的关机界面从未被改动，只是不再被调用。
+system_server 侧只挂了一个死方法的钩子，停用后不会留下任何东西。
 
 ## 许可
 

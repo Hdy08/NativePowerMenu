@@ -188,4 +188,162 @@ mOplusShutdownViewContainer  : androidx.constraintlayout.widget.ConstraintLayout
 | 窗口类型 `0x7e1` | 就是 `WindowManager.LayoutParams.TYPE_STATUS_BAR_SUB_PANEL`（与 `SystemUIDialog` 一致） |
 | SystemUI 资源 `global_actions_lite_padding` / `_corner_radius` / `_button_size` / `_button_padding` / `_grid_container_bottom_margin` / `_translate` / `_lite_background` / `_lite_button_background` / `_lite_text` / `_lite_emergency_icon` / `_lite_emergency_background` / `power_menu_lite_max_columns` | 全部存在 |
 | 主题 `Theme.SystemUI.Dialog.GlobalActions` | 存在（注意资源名用点号，不是 R 类里的下划线形式） |
+| SystemUI 布局 `global_actions_grid_lite` / `global_actions_grid_item_lite` + id `list_flow` / `global_actions_container` | 全部存在，且是 AOSP 原版（见下节） |
+| `com.android.systemui.statusbar.phone.SystemUIDialog` | `extends AlertDialog`，`<init>(Context)` 存在（扩展项的确认框用它） |
+| `com.android.server.statusbar.StatusBarManagerService` | 在 `services.jar`；`extends IStatusBarService.Stub`，`setIcon(String,String,int,int,String)` 与 `reboot(boolean)` 都在 |
+| `android.os.IPowerManager#reboot(Z,String,Z)` | 存在；系统进程调用时权限天然满足 |
+
+## 7. 设备自带的就是 AOSP 原版布局
+
+我一开始以为 ColorOS 把这些布局也删了，实际并没有 —— `SystemUI.apk` 里原封不动地有：
+
+```
+res/layout/global_actions_grid_lite.xml         2052 B
+res/layout/global_actions_grid_item_lite.xml    1340 B
+res/layout/global_actions_grid_v2.xml           1176 B
+res/layout/global_actions_power_dialog.xml       444 B
+res/drawable/global_actions_lite_background.xml  448 B
+res/drawable/global_actions_lite_button.xml      372 B
+```
+
+用 apktool 解出来对比 AOSP main 分支的源码，**结构与属性完全一致**：
+
+```xml
+<!-- res/layout/global_actions_grid_lite.xml (ColorOS SystemUI.apk 内) -->
+<androidx.constraintlayout.widget.ConstraintLayout android:id="@id/global_actions_container">
+  <com.android.systemui.globalactions.GlobalActionsLayoutLite android:id="@id/global_actions_view"
+      app:layout_constraintTop_toTopOf="parent" app:layout_constraintBottom_toBottomOf="parent" ...>
+    <com.android.systemui.common.ui.view.LaunchableConstraintLayout android:id="@android:id/list"
+        android:background="@drawable/global_actions_lite_background"
+        android:padding="@dimen/global_actions_lite_padding" ...>
+      <androidx.constraintlayout.helper.widget.Flow android:id="@id/list_flow"
+          app:flow_wrapMode="chain" app:flow_maxElementsWrap="2" ... />
+    </...>
+  </...>
+</...>
+```
+
+也就是说 ColorOS 只是把调用链换成了 `OplusShutdownView`，这些资源变成了死资源。
+模块现在直接 inflate 它们，并按 AOSP `GlobalActionsLayoutLite.onUpdateList()` 的做法
+把 `GlobalActionsItem` 交给 `Flow`。
+
+`GlobalActionsDialogLite.SinglePressAction.create()` 的关键几步（照抄即可）：
+
+```java
+View v = inflater.inflate(R.layout.global_actions_grid_item_lite, parent, false);
+v.setId(View.generateViewId());            // Flow 靠 id 引用子 View
+ImageView icon = v.findViewById(R.id.icon);        // @android:id/icon
+TextView message = v.findViewById(R.id.message);   // @android:id/message
+message.setSelected(true);                 // marquee 才动
+icon.setImageDrawable(getIcon(context));
+```
+
+`com.android.systemui.globalactions.GlobalActionsItem`、`LaunchableConstraintLayout`、
+`androidx.constraintlayout.helper.widget.Flow` 三个类在 dex 里也都在。
+
+### 与 HyperOS 提取出来的对比
+
+`Download/系统界面_16.03.251211.r.apk`（HyperOS 16.03.251211）里是同一套资源：
+
+| 文件 | ColorOS | HyperOS |
+| --- | --- | --- |
+| `global_actions_grid_lite.xml` | 2052 B | 2072 B |
+| `global_actions_grid_item_lite.xml` | 1340 B | 1340 B |
+| `global_actions_lite_background.xml` | 448 B | 448 B |
+| `global_actions_lite_button.xml` | 372 B | 372 B |
+
+apktool 解出来逐行对比，唯一差别是 HyperOS 的根 `ConstraintLayout` 上多一个
+`android:clipChildren="false"`。两者都是 AOSP 原版，所以模块直接用**设备自己那份**
+（永远与正在运行的 SystemUI 构建匹配），而不是把 HyperOS 的资源搬进来。
+
+## 8. 扩展电源菜单（引导模式 / 恢复模式）
+
+### 米客（Customiuizer）是怎么做的
+
+`Download/米客-26.08.08-test.apk` 就是 `name.monwf.customiuizer`，用的是新一代 libxposed API
+（`META-INF/xposed/module.prop` = `minApiVersion 101`），作用域里同时有 `android` 和 `system`。
+它的扩展电源菜单在 `bw1.u()`：
+
+```java
+int fastboot = res("epm_fastboot_title");      // 它自己的字符串
+int recovery = res("epm_recovery_title");
+int[] state = {-1};
+Class dialog = findClass("com.android.systemui.globalactions.GlobalActionsDialogLite");
+Class powerOptions = findClass("...GlobalActionsDialogLite$PowerOptionsAction");
+
+hookCtor("...GlobalActionsDialogLite$SinglePressAction", (int,int))   // after: 改 messageResId
+hookAfter(dialog, "createActionItems") {                             // 往 mItems 里塞两个
+    ArrayList items = getField(thisObject, "mItems");
+    state[0]=1; items.add(newInstance(powerOptions, thisObject));
+    state[0]=2; items.add(newInstance(powerOptions, thisObject));
+}
+hookBefore(powerOptions, "onPress") {                                // 换成确认框
+    int id = getField(thisObject, "mMessageResId");
+    if (id == fastboot || id == recovery) {
+        AlertDialog d = newInstance(SystemUIDialog, context);
+        d.setTitle(...); d.setButton(OK, ...); d.show();
+        param.setResult(null);                                       // 不走原来的 onPress
+    }
+}
+```
+
+确认后不是自己重启，而是发一个 MIUI 的系统广播：
+
+```java
+Intent i = new Intent("miui.intent.action.FastReboot");  // 由 MIUI 系统侧处理
+i.putExtra("mode", recovery ? "recovery" : "bootloader");
+context.sendBroadcast(i);
+```
+
+**ColorOS 没有这个广播接收者**，所以这条路不能照搬。
+
+### ColorOS 上的难点：SystemUI 没有 REBOOT 权限
+
+```
+$ adb-shell dumpsys package com.android.systemui | grep -c REBOOT
+0
+```
+
+`android.permission.REBOOT` 连"申请"都没有，因此 `PowerManager.reboot("recovery")`
+会直接抛 SecurityException。而 `GlobalActionsManager` 只有 `reboot(boolean safeMode)`，
+`IStatusBarService` 也只有 `reboot(Z)` / `shutdown()`，都没法带 reason。
+
+系统侧倒是可以做，ColorOS 自己的实现就是：
+
+```java
+// com.android.server.statusbar.StatusBarManagerService
+public void reboot(final boolean safeMode) {
+    enforceStatusBarService();
+    ...
+    reason = safeMode ? "safemode" : "userrequested";
+    ... mHandler.post(() -> ShutdownThread.reboot(getUiContext(), reason, false));
+}
+```
+
+**结论：必须同时注入 `android` 进程。**
+
+### 模块采用的通道
+
+不注册新服务（自定义服务名在 SELinux 里没有 `service_contexts` 标签，SystemUI 未必有
+`find` 权限），改用 SystemUI 本来就持有的 binder：
+
+```
+SystemUI                                      system_server
+  GlobalActionsComponent.mBarService
+  IStatusBarService.setIcon("native_power_menu:recovery", "", 0, 0, null)
+        │
+        └────────────── binder ──────────────▶  StatusBarManagerService.setIcon(...)
+                                                 └─ 钩子识别 magic 前缀
+                                                    ├─ param.setResult(null)   // 吞掉，不污染图标表
+                                                    └─ IPowerManager.reboot(false, reason, false)
+```
+
+选 `setIcon(String,String,int,int,String)` 的原因：现代 Android 里它已经是空壳
+（只做图标记账），但签名里有 String 可以承载 reason，且被 `STATUS_BAR_SERVICE` 保护
+——这个权限只有 SystemUI 有。system_server 侧再对 reason 做白名单（只认
+`recovery` / `bootloader`）。
+
+系统进程调用 `IPowerManager.reboot` 的权限是天然满足的：
+`ActivityManager.checkComponentPermission` 对 `Process.SYSTEM_UID` 直接返回 GRANTED。
+
 
