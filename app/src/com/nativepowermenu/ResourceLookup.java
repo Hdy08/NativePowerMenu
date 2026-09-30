@@ -60,6 +60,14 @@ final class ResourceLookup {
         return res.getIdentifier(name, "drawable", pkg);
     }
 
+    static int layoutId(Resources res, String pkg, String name) {
+        return res.getIdentifier(name, "layout", pkg);
+    }
+
+    static int id(Resources res, String pkg, String name) {
+        return res.getIdentifier(name, "id", pkg);
+    }
+
     static String string(Resources res, String pkg, String name, String fallback) {
         int id = res.getIdentifier(name, "string", pkg);
         if (id == 0) {

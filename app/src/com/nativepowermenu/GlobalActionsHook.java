@@ -95,7 +95,8 @@ final class GlobalActionsHook {
 
     private synchronized PowerMenuDialog getDialog(Context context) {
         if (mDialog == null) {
-            mDialog = new PowerMenuDialog(context, new PowerMenuActions(context, mClassLoader));
+            mDialog = new PowerMenuDialog(
+                    context, new PowerMenuActions(context, mClassLoader), mClassLoader);
         }
         return mDialog;
     }

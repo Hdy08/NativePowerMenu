@@ -26,6 +26,11 @@ public final class ModuleLog {
         XposedBridge.log(TAG + ": W " + message);
     }
 
+    public static void w(String message, Throwable throwable) {
+        Log.w(TAG, message, throwable);
+        XposedBridge.log(TAG + ": W " + message + " (" + throwable + ")");
+    }
+
     public static void e(String message, Throwable throwable) {
         Log.e(TAG, message, throwable);
         XposedBridge.log(TAG + ": E " + message);

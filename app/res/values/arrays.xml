@@ -1,7 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Default LSPosed scope: only SystemUI hosts the power menu. -->
+    <!--
+      Default LSPosed scope.
+        com.android.systemui - hosts the power menu itself.
+        android (system framework / system_server) - needed for the extended bootloader and
+        recovery entries, because only the system process may reboot with a custom reason.
+    -->
     <string-array name="xposed_scope" translatable="false">
         <item>com.android.systemui</item>
+        <item>android</item>
     </string-array>
 </resources>

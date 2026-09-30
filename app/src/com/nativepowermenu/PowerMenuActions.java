@@ -6,6 +6,7 @@ import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.os.Handler;
 import android.os.Looper;
+import android.widget.Toast;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -27,6 +28,8 @@ import de.robv.android.xposed.XposedHelpers;
  *   <li>{@code screenshot} -&gt; {@code com.android.internal.util.ScreenshotHelper}
  *   <li>{@code emergency} -&gt; {@code ACTION_EMERGENCY_ASSISTANCE}
  *   <li>{@code lockdown} -&gt; {@code LockPatternUtils.requireStrongAuth()} + {@code IWindowManager.lockNow()}
+ *   <li>{@code bootloader} / {@code recovery} -&gt; the extended entries, which need the system
+ *       process (see {@link RebootBridge}) and therefore ask for confirmation first
  * </ul>
  */
 final class PowerMenuActions {
@@ -95,10 +98,12 @@ final class PowerMenuActions {
         boolean telephony = mContext.getPackageManager()
                 .hasSystemFeature(PackageManager.FEATURE_TELEPHONY);
         boolean secure = isKeyguardSecure();
+        boolean provisioned = deviceProvisioned;
 
         for (String key : resolveKeys()) {
             switch (key) {
                 case KEY_POWER:
+                    // AOSP: showBeforeProvisioning() == true
                     items.add(powerItem());
                     break;
                 case KEY_RESTART:
@@ -110,18 +115,27 @@ final class PowerMenuActions {
                     }
                     break;
                 case KEY_LOCKDOWN:
-                    if (secure && isLockdownAllowed()) {
+                    // AOSP: showBeforeProvisioning() == false
+                    if (provisioned && secure && isLockdownAllowed()) {
                         items.add(lockdownItem());
                     }
                     break;
                 case KEY_SCREENSHOT:
-                    items.add(screenshotItem());
+                    // AOSP: showBeforeProvisioning() == false
+                    if (provisioned) {
+                        items.add(screenshotItem());
+                    }
                     break;
                 default:
                     // Unsupported vendor key: ignore it rather than showing a dead button.
                     break;
             }
         }
+
+        // The extended entries are the point of this module, so they are appended rather than being
+        // subject to the device's own config_globalActionsList.
+        items.add(bootloaderItem());
+        items.add(recoveryItem());
         return items;
     }
 
@@ -158,9 +172,10 @@ final class PowerMenuActions {
         return new PowerMenuItem(
                 KEY_POWER,
                 ResourceLookup.drawableId(mSysUiRes, ResourceLookup.PKG_ANDROID, "ic_lock_power_off"),
+                null,
                 ResourceLookup.string(mSysUiRes, ResourceLookup.PKG_ANDROID,
                         "global_action_power_off", "Power off"),
-                false,
+                false, null, null,
                 () -> invokeManager("shutdown"),
                 () -> invokeManager("reboot", Boolean.TRUE));
     }
@@ -169,9 +184,10 @@ final class PowerMenuActions {
         return new PowerMenuItem(
                 KEY_RESTART,
                 ResourceLookup.drawableId(mSysUiRes, ResourceLookup.PKG_ANDROID, "ic_restart"),
+                null,
                 ResourceLookup.string(mSysUiRes, ResourceLookup.PKG_ANDROID,
                         "global_action_restart", "Restart"),
-                false,
+                false, null, null,
                 () -> invokeManager("reboot", Boolean.FALSE),
                 null);
     }
@@ -180,9 +196,10 @@ final class PowerMenuActions {
         return new PowerMenuItem(
                 KEY_SCREENSHOT,
                 ResourceLookup.drawableId(mSysUiRes, ResourceLookup.PKG_ANDROID, "ic_screenshot"),
+                null,
                 ResourceLookup.string(mSysUiRes, ResourceLookup.PKG_ANDROID,
                         "global_action_screenshot", "Screenshot"),
-                false,
+                false, null, null,
                 this::takeScreenshot,
                 null);
     }
@@ -191,9 +208,10 @@ final class PowerMenuActions {
         return new PowerMenuItem(
                 KEY_EMERGENCY,
                 ResourceLookup.drawableId(mSysUiRes, ResourceLookup.PKG_ANDROID, "emergency_icon"),
+                null,
                 ResourceLookup.string(mSysUiRes, ResourceLookup.PKG_ANDROID,
                         "global_action_emergency", "Emergency"),
-                true,
+                true, null, null,
                 this::startEmergencyDialer,
                 null);
     }
@@ -203,10 +221,39 @@ final class PowerMenuActions {
                 KEY_LOCKDOWN,
                 ResourceLookup.drawableId(
                         mSysUiRes, ResourceLookup.PKG_ANDROID, "ic_lock_lockdown"),
+                null,
                 ResourceLookup.string(mSysUiRes, ResourceLookup.PKG_ANDROID,
                         "global_action_lockdown", "Lockdown"),
-                false,
+                false, null, null,
                 this::lockDown,
+                null);
+    }
+
+    private PowerMenuItem bootloaderItem() {
+        return new PowerMenuItem(
+                "bootloader",
+                0,
+                ModuleResources.drawable(mContext, R.drawable.ic_bootloader),
+                ModuleResources.string(mContext, R.string.reboot_bootloader_title, "Bootloader"),
+                false,
+                ModuleResources.string(mContext, R.string.reboot_bootloader_title, "Bootloader"),
+                ModuleResources.string(mContext, R.string.reboot_bootloader_confirm,
+                        "Reboot to bootloader?"),
+                () -> rebootTo(RebootBridge.REASON_BOOTLOADER),
+                null);
+    }
+
+    private PowerMenuItem recoveryItem() {
+        return new PowerMenuItem(
+                "recovery",
+                0,
+                ModuleResources.drawable(mContext, R.drawable.ic_recovery),
+                ModuleResources.string(mContext, R.string.reboot_recovery_title, "Recovery"),
+                false,
+                ModuleResources.string(mContext, R.string.reboot_recovery_title, "Recovery"),
+                ModuleResources.string(mContext, R.string.reboot_recovery_confirm,
+                        "Reboot to recovery?"),
+                () -> rebootTo(RebootBridge.REASON_RECOVERY),
                 null);
     }
 
@@ -222,6 +269,28 @@ final class PowerMenuActions {
             XposedHelpers.callMethod(manager, method, args);
         } catch (Throwable t) {
             ModuleLog.e("GlobalActionsManager." + method + " failed", t);
+        }
+    }
+
+    /**
+     * Extended reboot. SystemUI cannot reboot with a custom reason itself (no
+     * {@code android.permission.REBOOT}), so the request travels through the system process;
+     * see {@link RebootBridge}.
+     */
+    private void rebootTo(String reason) {
+        if (RebootClient.reboot(mManager, reason)) {
+            ModuleLog.d("asked the system process to reboot to " + reason);
+            return;
+        }
+        ModuleLog.e("could not request a reboot to " + reason + " (is the module scoped to "
+                + "\"System Framework\" too?)", null);
+        try {
+            Toast.makeText(mContext,
+                    ModuleResources.string(mContext, R.string.reboot_unavailable,
+                            "Reboot is unavailable - enable the module for the system framework"),
+                    Toast.LENGTH_LONG).show();
+        } catch (Throwable ignored) {
+            // Toasts are best-effort only.
         }
     }
 
@@ -268,7 +337,8 @@ final class PowerMenuActions {
             if (utils == null) {
                 return;
             }
-            XposedHelpers.findMethodExact(utils.getClass(), "requireStrongAuth", int.class, int.class)
+            XposedHelpers.findMethodExact(
+                    utils.getClass(), "requireStrongAuth", int.class, int.class)
                     .invoke(utils, STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN, USER_ALL);
 
             Object windowManager = XposedHelpers.callStaticMethod(

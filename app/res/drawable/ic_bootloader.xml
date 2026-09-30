@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Chip / "bootloader" glyph: hollow body with eight pins. Pure rectangles, no curves. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M7,7h10v10h-10zM9,9v6h6v-6z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M8,4h1.4v3h-1.4zM11.3,4h1.4v3h-1.4zM14.6,4h1.4v3h-1.4zM8,17h1.4v3h-1.4zM11.3,17h1.4v3h-1.4zM14.6,17h1.4v3h-1.4zM4,8h3v1.4h-3zM4,11.3h3v1.4h-3zM4,14.6h3v1.4h-3zM17,8h3v1.4h-3zM17,11.3h3v1.4h-3zM17,14.6h3v1.4h-3z" />
+</vector>

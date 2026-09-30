@@ -1,8 +1,10 @@
 package com.nativepowermenu;
 
+import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.ColorStateList;
@@ -11,14 +13,15 @@ import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.RippleDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
 import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
@@ -28,16 +31,21 @@ import android.widget.TextView;
 
 import java.util.List;
 
+import de.robv.android.xposed.XposedHelpers;
+
 /**
- * The AOSP-flavoured power menu.
+ * The power menu, rendered with SystemUI's own copy of the AOSP layout.
  *
- * <p>The layout mirrors {@code packages/SystemUI/res/layout/global_actions_grid_lite.xml}: a fully
- * transparent dialog window with a rounded, slightly elevated panel in the centre, holding a grid
- * of round icon buttons with a label underneath each one. Dimensions, colours and typography are
- * read from the device's own {@code com.android.systemui} resources, so the result matches the
- * SystemUI build that is actually running.
+ * <p>ColorOS still ships {@code res/layout/global_actions_grid_lite.xml} and
+ * {@code global_actions_grid_item_lite.xml} untouched - they are the stock AOSP files (the same ones
+ * HyperOS ships; only a {@code clipChildren} attribute differs). AOSP's own dialog simply inflates
+ * them and feeds the {@code Flow} helper one {@code GlobalActionsItem} per action, so doing the same
+ * gives a genuinely native menu rather than an approximation: same layout, same
+ * {@code GlobalActionsItem} wrapper, same dimens, colours and per-device theming.
  */
 final class PowerMenuDialog {
+
+    private static final String PKG = ResourceLookup.PKG_SYSTEMUI;
 
     /** {@code WindowManager.LayoutParams.TYPE_STATUS_BAR_SUB_PANEL}, what SystemUIDialog uses. */
     private static final int TYPE_STATUS_BAR_SUB_PANEL = 2017;
@@ -48,7 +56,6 @@ final class PowerMenuDialog {
     /** Delay between dismissing the dialog and running the action it triggered. */
     private static final long ACTION_DELAY_MS = 200L;
 
-    private static final int FALLBACK_PANEL_COLOR = 0xFF191C18;
     private static final int FALLBACK_BUTTON_COLOR = 0xFF303030;
     private static final int FALLBACK_TEXT_COLOR = 0xFFF0F0F0;
     private static final int FALLBACK_EMERGENCY_ICON_COLOR = 0xFFFFB4AB;
@@ -56,14 +63,16 @@ final class PowerMenuDialog {
 
     private final Context mContext;
     private final PowerMenuActions mActions;
+    private final ClassLoader mClassLoader;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
 
     private Dialog mDialog;
     private BroadcastReceiver mReceiver;
 
-    PowerMenuDialog(Context context, PowerMenuActions actions) {
+    PowerMenuDialog(Context context, PowerMenuActions actions, ClassLoader classLoader) {
         mContext = context;
         mActions = actions;
+        mClassLoader = classLoader;
     }
 
     boolean isShowing() {
@@ -104,9 +113,15 @@ final class PowerMenuDialog {
         }
 
         Context themed = themedContext();
+        View content = buildContentView(themed, items);
+        if (content == null) {
+            ModuleLog.w("could not build the power menu view");
+            return;
+        }
+
         Dialog dialog = new Dialog(themed);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        dialog.setContentView(buildContentView(themed, items));
+        dialog.setContentView(content);
         dialog.setCanceledOnTouchOutside(true);
         dialog.setOnDismissListener(d -> {
             unregisterReceiver();
@@ -127,16 +142,13 @@ final class PowerMenuDialog {
 
     private Context themedContext() {
         int theme = ResourceLookup.styleId(
-                mContext.getResources(), ResourceLookup.PKG_SYSTEMUI,
-                "Theme.SystemUI.Dialog.GlobalActions");
+                mContext.getResources(), PKG, "Theme.SystemUI.Dialog.GlobalActions");
         if (theme != 0) {
             try {
                 return new ContextThemeWrapper(mContext, theme);
             } catch (Throwable t) {
                 ModuleLog.w("could not apply Theme.SystemUI.Dialog.GlobalActions: " + t);
             }
-        } else {
-            ModuleLog.w("Theme.SystemUI.Dialog.GlobalActions not found, using the app theme");
         }
         return mContext;
     }
@@ -196,158 +208,247 @@ final class PowerMenuDialog {
 
     // ---------------------------------------------------------------- view hierarchy
 
+    /**
+     * Inflates AOSP's {@code global_actions_grid_lite} and fills it the way
+     * {@code GlobalActionsLayoutLite.onUpdateList()} would, minus the adapter.
+     */
     private View buildContentView(Context context, List<PowerMenuItem> items) {
-        Metrics metrics = new Metrics(context);
+        Resources res = context.getResources();
+        LayoutInflater inflater = LayoutInflater.from(context);
 
-        LinearLayout panel = new LinearLayout(context);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        GradientDrawable panelBackground = new GradientDrawable();
-        panelBackground.setShape(GradientDrawable.RECTANGLE);
-        panelBackground.setColor(metrics.panelColor);
-        panelBackground.setCornerRadius(metrics.cornerRadius);
-        panel.setBackground(panelBackground);
-        panel.setPadding(metrics.padding, metrics.padding, metrics.padding, metrics.padding);
-        panel.setElevation(metrics.translate);
-
-        int columns = Math.max(1, metrics.columns);
-        for (int start = 0; start < items.size(); start += columns) {
-            int end = Math.min(start + columns, items.size());
-            LinearLayout row = new LinearLayout(context);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER);
-            for (int i = start; i < end; i++) {
-                row.addView(createItemView(context, metrics, items.get(i)));
-            }
-            // Keep the last row aligned with the rows above it when it is not full.
-            for (int i = end; i < start + columns; i++) {
-                View spacer = new View(context);
-                row.addView(spacer, new LinearLayout.LayoutParams(metrics.buttonSize, 0));
-            }
-            panel.addView(row);
+        int rootLayout = ResourceLookup.layoutId(res, PKG, "global_actions_grid_lite");
+        if (rootLayout == 0) {
+            ModuleLog.w("SystemUI has no global_actions_grid_lite layout, using the fallback view");
+            return buildFallbackContentView(context, items);
         }
 
-        FrameLayout root = new FrameLayout(context);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
-        lp.gravity = Gravity.CENTER;
-        root.addView(panel, lp);
-        // The window fills the screen, so "tap outside" means "tap on this transparent root".
-        // setCanceledOnTouchOutside() would never fire for a full-screen window.
-        root.setOnClickListener(v -> dismiss());
+        View root;
+        try {
+            root = inflater.inflate(rootLayout, null, false);
+        } catch (Throwable t) {
+            ModuleLog.e("could not inflate global_actions_grid_lite", t);
+            return buildFallbackContentView(context, items);
+        }
+
+        ViewGroup listView = root.findViewById(android.R.id.list);
+        View flow = root.findViewById(ResourceLookup.id(res, PKG, "list_flow"));
+        int itemLayout = ResourceLookup.layoutId(res, PKG, "global_actions_grid_item_lite");
+        if (listView == null || flow == null || itemLayout == 0) {
+            ModuleLog.w("AOSP power menu layout is incomplete, using the fallback view");
+            return buildFallbackContentView(context, items);
+        }
+
+        for (PowerMenuItem item : items) {
+            View itemView = inflater.inflate(itemLayout, listView, false);
+            // ConstraintLayout's Flow references children by id.
+            itemView.setId(View.generateViewId());
+            bindItem(context, itemView, item, res);
+            listView.addView(itemView);
+            addToFlow(flow, listView, itemView);
+        }
+
+        // AOSP drives this from power_menu_lite_max_columns; the XML already defaults to 2.
+        int columns = ResourceLookup.integer(res, PKG, "power_menu_lite_max_columns", 2);
+        if (columns > 0) {
+            try {
+                XposedHelpers.callMethod(flow, "setMaxElementsWrap", columns);
+            } catch (Throwable ignored) {
+                // Not fatal: the XML attribute already picks a sensible value.
+            }
+        }
+
+        View container = root.findViewById(
+                ResourceLookup.id(res, PKG, "global_actions_container"));
+        if (container != null) {
+            // The window fills the screen, so "tap outside" means "tap on this container".
+            container.setOnClickListener(v -> dismiss());
+        }
         return root;
     }
 
-    private View createItemView(Context context, Metrics metrics, PowerMenuItem item) {
-        LinearLayout container = new LinearLayout(context);
-        container.setOrientation(LinearLayout.VERTICAL);
-        container.setGravity(Gravity.CENTER_HORIZONTAL);
-        container.setLayoutParams(new LinearLayout.LayoutParams(
-                metrics.buttonSize, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        int foregroundColor = item.emergency ? metrics.emergencyIconColor : metrics.textColor;
-        int backgroundColor = item.emergency
-                ? metrics.emergencyBackground : metrics.buttonBackground;
-
-        ImageView icon = new ImageView(context);
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(
-                metrics.buttonSize, metrics.buttonSize);
-        iconParams.gravity = Gravity.CENTER_HORIZONTAL;
-        icon.setLayoutParams(iconParams);
-        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        icon.setPadding(metrics.buttonPadding, metrics.buttonPadding,
-                metrics.buttonPadding, metrics.buttonPadding);
-
-        GradientDrawable oval = new GradientDrawable();
-        oval.setShape(GradientDrawable.OVAL);
-        oval.setColor(backgroundColor);
-        icon.setBackground(new RippleDrawable(
-                ColorStateList.valueOf(0x33FFFFFF), oval, null));
-
-        Drawable drawable = item.iconResId != 0 ? context.getDrawable(item.iconResId) : null;
-        if (drawable != null) {
-            drawable = drawable.mutate();
-            drawable.setTint(foregroundColor);
+    /**
+     * Registers an item with the {@code Flow} helper. AOSP calls {@code Flow#addView(View)}, which
+     * also detaches the view from its parent on some androidx versions; if that happened we put it
+     * back under the ConstraintLayout so it still gets laid out.
+     */
+    private void addToFlow(View flow, ViewGroup listView, View itemView) {
+        try {
+            XposedHelpers.callMethod(flow, "addView", itemView);
+        } catch (Throwable t) {
+            ModuleLog.w("Flow#addView failed", t);
         }
-        icon.setImageDrawable(drawable);
-        container.addView(icon);
+        if (itemView.getParent() == null) {
+            listView.addView(itemView);
+        }
+    }
 
-        TextView label = new TextView(context);
-        label.setText(item.label);
-        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        label.setTextColor(foregroundColor);
-        label.setGravity(Gravity.CENTER);
-        label.setSingleLine(true);
-        label.setEllipsize(TextUtils.TruncateAt.MARQUEE);
-        label.setMarqueeRepeatLimit(-1);
-        label.setSelected(true);
-        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        labelParams.topMargin = metrics.labelMargin;
-        container.addView(label, labelParams);
+    private void bindItem(Context context, View itemView, PowerMenuItem item, Resources res) {
+        ImageView icon = itemView.findViewById(android.R.id.icon);
+        TextView message = itemView.findViewById(android.R.id.message);
+        if (message != null) {
+            message.setText(item.label);
+            // Required for the marquee to animate, exactly like AOSP does it.
+            message.setSelected(true);
+        }
+        if (icon != null) {
+            Drawable drawable = item.iconDrawable;
+            if (drawable == null && item.iconResId != 0) {
+                try {
+                    drawable = context.getDrawable(item.iconResId);
+                } catch (Throwable t) {
+                    ModuleLog.w("could not load the icon for " + item.key, t);
+                }
+            }
+            if (drawable != null) {
+                drawable = drawable.mutate();
+                icon.setImageDrawable(drawable);
+            }
+            icon.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            if (item.emergency) {
+                int iconColor = ResourceLookup.color(res, PKG,
+                        "global_actions_lite_emergency_icon", FALLBACK_EMERGENCY_ICON_COLOR);
+                int background = ResourceLookup.color(res, PKG,
+                        "global_actions_lite_emergency_background", FALLBACK_EMERGENCY_BACKGROUND);
+                if (drawable != null) {
+                    drawable.setTint(iconColor);
+                }
+                // Also overrides the layout's android:tint, so it survives applyImageTint().
+                icon.setImageTintList(ColorStateList.valueOf(iconColor));
+                icon.setBackgroundTintList(ColorStateList.valueOf(background));
+                itemView.setBackgroundTintList(ColorStateList.valueOf(background));
+            }
+        }
 
         // Run the action from a Handler, not from the view: dismiss() detaches the view and
         // View#postDelayed on a detached view may never run. The delay also lets the window go away
         // first, which matters for the screenshot entry.
-        container.setOnClickListener(v -> {
+        itemView.setOnClickListener(v -> {
             dismiss();
-            mHandler.postDelayed(item.onPress, ACTION_DELAY_MS);
+            mHandler.postDelayed(() -> runItem(item), ACTION_DELAY_MS);
         });
         if (item.onLongPress != null) {
-            container.setOnLongClickListener(v -> {
+            itemView.setOnLongClickListener(v -> {
                 dismiss();
                 mHandler.postDelayed(item.onLongPress, ACTION_DELAY_MS);
                 return true;
             });
         }
-        return container;
     }
 
-    /** Everything read from the running SystemUI's resources. */
-    private static final class Metrics {
+    private void runItem(PowerMenuItem item) {
+        if (!item.needsConfirmation()) {
+            item.onPress.run();
+            return;
+        }
+        showConfirmation(item);
+    }
 
-        final int padding;
-        final int cornerRadius;
-        final int buttonSize;
-        final int buttonPadding;
-        final int labelMargin;
-        final int translate;
-        final int columns;
-        final int panelColor;
-        final int buttonBackground;
-        final int textColor;
-        final int emergencyIconColor;
-        final int emergencyBackground;
+    /**
+     * The extended entries ask before rebooting - a stray tap must not drop the phone into fastboot.
+     * AOSP has no such dialog, so this reuses SystemUI's own {@code SystemUIDialog} (the class
+     * MIUI-style extended power menus use) and falls back to a plain {@link AlertDialog}.
+     */
+    private void showConfirmation(PowerMenuItem item) {
+        DialogInterface.OnClickListener confirm = (dialog, which) ->
+                mHandler.postDelayed(item.onPress, ACTION_DELAY_MS);
 
-        Metrics(Context context) {
-            Resources res = context.getResources();
-            padding = ResourceLookup.dimen(res, ResourceLookup.PKG_SYSTEMUI,
-                    "global_actions_lite_padding", dp(context, 24));
-            cornerRadius = ResourceLookup.dimen(res, ResourceLookup.PKG_SYSTEMUI,
-                    "global_actions_corner_radius", dp(context, 28));
-            buttonSize = ResourceLookup.dimen(res, ResourceLookup.PKG_SYSTEMUI,
-                    "global_actions_button_size", dp(context, 96));
-            buttonPadding = ResourceLookup.dimen(res, ResourceLookup.PKG_SYSTEMUI,
-                    "global_actions_button_padding", dp(context, 38));
-            labelMargin = ResourceLookup.dimen(res, ResourceLookup.PKG_SYSTEMUI,
-                    "global_actions_grid_container_bottom_margin", dp(context, 8));
-            translate = ResourceLookup.dimen(res, ResourceLookup.PKG_SYSTEMUI,
-                    "global_actions_translate", dp(context, 9));
-            columns = ResourceLookup.integer(res, ResourceLookup.PKG_SYSTEMUI,
-                    "power_menu_lite_max_columns", 2);
-            panelColor = ResourceLookup.color(res, ResourceLookup.PKG_SYSTEMUI,
-                    "global_actions_lite_background", FALLBACK_PANEL_COLOR);
-            buttonBackground = ResourceLookup.color(res, ResourceLookup.PKG_SYSTEMUI,
-                    "global_actions_lite_button_background", FALLBACK_BUTTON_COLOR);
-            textColor = ResourceLookup.color(res, ResourceLookup.PKG_SYSTEMUI,
-                    "global_actions_lite_text", FALLBACK_TEXT_COLOR);
-            emergencyIconColor = ResourceLookup.color(res, ResourceLookup.PKG_SYSTEMUI,
-                    "global_actions_lite_emergency_icon", FALLBACK_EMERGENCY_ICON_COLOR);
-            emergencyBackground = ResourceLookup.color(res, ResourceLookup.PKG_SYSTEMUI,
-                    "global_actions_lite_emergency_background", FALLBACK_EMERGENCY_BACKGROUND);
+        try {
+            Class<?> systemUiDialog = XposedHelpers.findClass(
+                    "com.android.systemui.statusbar.phone.SystemUIDialog", mClassLoader);
+            Object instance = XposedHelpers.newInstance(systemUiDialog, mContext);
+            AlertDialog dialog = (AlertDialog) instance;
+            dialog.setTitle(item.confirmTitle);
+            dialog.setMessage(item.confirmMessage);
+            dialog.setButton(DialogInterface.BUTTON_POSITIVE,
+                    ModuleResources.string(mContext, R.string.reboot_confirm_ok, "OK"), confirm);
+            dialog.setButton(DialogInterface.BUTTON_NEGATIVE,
+                    ModuleResources.string(mContext, R.string.reboot_confirm_cancel, "Cancel"),
+                    (DialogInterface.OnClickListener) null);
+            dialog.show();
+        } catch (Throwable t) {
+            ModuleLog.w("SystemUIDialog unavailable, using a plain AlertDialog", t);
+            int theme = ResourceLookup.styleId(mContext.getResources(), PKG,
+                    "Theme.SystemUI.Dialog.GlobalActions");
+            AlertDialog.Builder builder = theme != 0
+                    ? new AlertDialog.Builder(mContext, theme)
+                    : new AlertDialog.Builder(mContext);
+            builder.setTitle(item.confirmTitle)
+                    .setMessage(item.confirmMessage)
+                    .setPositiveButton(
+                            ModuleResources.string(mContext, R.string.reboot_confirm_ok, "OK"),
+                            confirm)
+                    .setNegativeButton(
+                            ModuleResources.string(
+                                    mContext, R.string.reboot_confirm_cancel, "Cancel"),
+                            null)
+                    .show();
+        }
+    }
+
+    /**
+     * Last-resort view used only when the AOSP layout is missing (a future ColorOS could drop it).
+     * Keeps the menu usable instead of leaving the power button dead.
+     */
+    private View buildFallbackContentView(Context context, List<PowerMenuItem> items) {
+        Resources res = context.getResources();
+        int textColor = ResourceLookup.color(res, PKG,
+                "global_actions_lite_text", FALLBACK_TEXT_COLOR);
+        int backgroundColor = ResourceLookup.color(res, PKG,
+                "global_actions_lite_background", FALLBACK_BUTTON_COLOR);
+        int padding = ResourceLookup.dimen(res, PKG, "global_actions_lite_padding", 24);
+        int radius = ResourceLookup.dimen(res, PKG, "global_actions_corner_radius", 28);
+        int rowPadding = Math.round(16 * res.getDisplayMetrics().density);
+        int iconSize = Math.round(24 * res.getDisplayMetrics().density);
+
+        LinearLayout list = new LinearLayout(context);
+        list.setOrientation(LinearLayout.VERTICAL);
+        for (PowerMenuItem item : items) {
+            LinearLayout row = new LinearLayout(context);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(rowPadding, rowPadding, rowPadding, rowPadding);
+
+            ImageView icon = new ImageView(context);
+            icon.setLayoutParams(new LinearLayout.LayoutParams(iconSize, iconSize));
+            Drawable drawable = item.iconDrawable;
+            if (drawable == null && item.iconResId != 0) {
+                drawable = context.getDrawable(item.iconResId);
+            }
+            if (drawable != null) {
+                drawable = drawable.mutate();
+                drawable.setTint(textColor);
+                icon.setImageDrawable(drawable);
+            }
+            row.addView(icon);
+
+            TextView label = new TextView(context);
+            label.setText(item.label);
+            label.setTextColor(textColor);
+            label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+            label.setPadding(rowPadding, 0, 0, 0);
+            label.setSingleLine(true);
+            label.setEllipsize(TextUtils.TruncateAt.END);
+            row.addView(label);
+
+            row.setOnClickListener(v -> {
+                dismiss();
+                mHandler.postDelayed(() -> runItem(item), ACTION_DELAY_MS);
+            });
+            list.addView(row);
         }
 
-        private static int dp(Context context, int value) {
-            return Math.round(value * context.getResources().getDisplayMetrics().density);
-        }
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(backgroundColor);
+        background.setCornerRadius(radius);
+        list.setBackground(background);
+        list.setPadding(padding, padding, padding, padding);
+
+        FrameLayout root = new FrameLayout(context);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.CENTER;
+        root.addView(list, lp);
+        root.setOnClickListener(v -> dismiss());
+        return root;
     }
 }
