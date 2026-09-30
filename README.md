@@ -100,9 +100,10 @@ system_server 侧的钩子识别前缀、吞掉这次调用（不会污染状态
 
 - Android 12+（`minSdk 31`），已在 **OnePlus PJZ110 / ColorOS 16.0.5.703 (Android 16, SDK 36)** 上验证。
 - LSPosed（含 Zygisk / 内置版本均可）已激活。
-- 作用域：**系统界面（com.android.systemui）** + **系统框架（android）**。
+- 作用域：**系统界面（com.android.systemui）** + **系统（LSPosed 里 system_server 对应的包名是
+  `system`，模块的推荐作用域把 `android` 和 `system` 都列上了，勾中任意一个能命中系统进程的即可）**。
 
-> **「系统框架」这个作用域是必须的，不是可选项。**
+> **系统进程这个作用域是必须的，不是可选项。**
 >
 > ColorOS 的 `PowerManagerService.reboot()` 会 `enforceCallingOrSelfPermission`：
 >
@@ -120,16 +121,16 @@ system_server 侧的钩子识别前缀、吞掉这次调用（不会污染状态
 > `StatusBarManagerService.reboot(boolean)` 的做法。模块因此需要在 system_server 里也跑一份。
 >
 > **注意：升级安装 APK 不会重置 LSPosed 的作用域**，装了新版本之后要自己回
-> 「模块 → 原生电源菜单 → 作用域」把「系统框架」勾上，再重启手机。
-> 漏了这一步的表现就是：设置项与图标都正常，但点「引导模式 / 恢复模式」确定之后毫无反应。
-> 新版会在这时弹一条提示告诉你去哪里开。
+> 「模块 → 原生电源菜单 → 作用域」确认系统进程那一项被勾上，再重启手机。
+> 漏了这一步的表现是：设置项与图标都正常，但点「引导模式 / 恢复模式」确定之后毫无反应
+> （新版会弹提示告诉你去哪里开）。
 
 ## 安装
 
 1. 安装 `build/NativePowerMenu.apk`。
 2. 打开 LSPosed 管理器 → 模块 → 启用「原生电源菜单」。
-3. 作用域同时勾选「系统界面」和「系统框架」。
-4. 重启手机（`系统框架` 作用域只对重启后新起的 system_server 生效）。
+3. 作用域同时勾选「系统界面」和系统进程那一项。
+4. 重启手机（系统进程侧的作用域只对重启后新起的 system_server 生效）。
 5. 之后直接打开「原生电源菜单」应用调整开关与顺序，点「保存并应用」即可。
 
 ## 排错
