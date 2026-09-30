@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">原生电源菜单</string>
+    <string name="module_description">把 ColorOS / Oplus 的电源菜单替换回原生 Android (AOSP) 样式，仅对 SystemUI 生效。</string>
+</resources>

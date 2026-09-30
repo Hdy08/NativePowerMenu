@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Default LSPosed scope: only SystemUI hosts the power menu. -->
+    <string-array name="xposed_scope" translatable="false">
+        <item>com.android.systemui</item>
+    </string-array>
+</resources>
