@@ -12,6 +12,7 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -24,6 +25,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -37,10 +39,15 @@ import java.util.Set;
  * design language (and the system light/dark mode) without bundling Material Components.
  *
  * <p>The list is a plain {@code LinearLayout} of fixed-height rows: one row per power-menu entry,
- * with a drag handle on the left and a switch on the right. Rows are swapped while dragging, which
- * is deterministic because every row is exactly the same height.
+ * with a drag handle on the left and a switch on the right. While dragging, the grabbed row follows
+ * the finger continuously (it floats above the list on its own background) and the rows it passes
+ * slide out of the way; the order is only committed to the model as the row crosses slot
+ * boundaries.
  */
 public class SettingsActivity extends Activity {
+
+    private static final long REORDER_ANIM_MS = 140L;
+    private static final long DROP_ANIM_MS = 120L;
 
     private final List<String> mOrder = new ArrayList<>();
     private final Set<String> mDisabled = new LinkedHashSet<>();
@@ -51,9 +58,9 @@ public class SettingsActivity extends Activity {
     private LinearLayout mItemContainer;
     private Switch mMasterSwitch;
     private Button mSaveButton;
-    private TextView mStatus;
-
-    private View mDraggingRow;
+    private ViewGroup mDraggingRow;
+    /** Where inside the grabbed row the finger landed, in pixels from its top. */
+    private float mDragGrabOffset;
     private int mRowHeightPx;
     private int mDividerHeightPx;
 
@@ -61,7 +68,7 @@ public class SettingsActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         // Theme.DeviceDefault.DayNight has an action bar and the public framework has no
-        // DayNight + NoActionBar variant, so hide it and draw the AOSP-style large title instead.
+        // DayNight + NoActionBar variant, so hide it rather than showing an empty bar.
         ActionBar actionBar = getActionBar();
         if (actionBar != null) {
             actionBar.hide();
@@ -94,15 +101,14 @@ public class SettingsActivity extends Activity {
     private void saveAndApply() {
         persistState();
         mSaveButton.setEnabled(false);
-        mStatus.setText(R.string.settings_applying);
         pushConfig(true, new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent result) {
                 mSaveButton.setEnabled(true);
                 boolean applied = getResultCode() == PowerMenuConfig.RESULT_APPLIED;
-                mStatus.setText(applied
-                        ? R.string.settings_applied
-                        : R.string.settings_not_applied);
+                Toast.makeText(SettingsActivity.this,
+                        applied ? R.string.settings_applied : R.string.settings_not_applied,
+                        Toast.LENGTH_SHORT).show();
             }
         });
     }
@@ -154,26 +160,25 @@ public class SettingsActivity extends Activity {
     private View buildContentView() {
         mScrollView = new ScrollView(this);
         mScrollView.setFillViewport(true);
+        // A dragged row floats above the list and may overhang the card, so nothing on the way down
+        // may clip its children.
+        mScrollView.setClipChildren(false);
+        mScrollView.setClipToPadding(false);
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(20), dp(28), dp(20), dp(32));
+        content.setClipChildren(false);
+        content.setClipToPadding(false);
+        content.setPadding(dp(20), dp(20), dp(20), dp(32));
         mScrollView.addView(content, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView title = new TextView(this);
-        title.setText(R.string.app_name);
-        title.setTextSize(28);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setTextColor(themeColorList(android.R.attr.textColorPrimary));
-        content.addView(title);
 
         TextView subtitle = new TextView(this);
         subtitle.setText(R.string.settings_subtitle);
         subtitle.setTextSize(14);
         subtitle.setTextColor(themeColorList(android.R.attr.textColorSecondary));
         content.addView(subtitle, margins(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 0, dp(4), 0, dp(20)));
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(4), 0, 0, dp(20)));
 
         content.addView(buildMasterCard(), margins(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, dp(24)));
@@ -190,8 +195,12 @@ public class SettingsActivity extends Activity {
 
         mItemContainer = new LinearLayout(this);
         mItemContainer.setOrientation(LinearLayout.VERTICAL);
+        mItemContainer.setClipChildren(false);
+        mItemContainer.setClipToPadding(false);
         LinearLayout itemsCard = new LinearLayout(this);
         itemsCard.setOrientation(LinearLayout.VERTICAL);
+        itemsCard.setClipChildren(false);
+        itemsCard.setClipToPadding(false);
         itemsCard.setBackground(cardBackground());
         itemsCard.addView(mItemContainer, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -210,16 +219,9 @@ public class SettingsActivity extends Activity {
         mSaveButton.setAllCaps(false);
         mSaveButton.setTextSize(16);
         mSaveButton.setOnClickListener(v -> saveAndApply());
-        stylePrimaryButton(mSaveButton);
+        stylePillButton(mSaveButton);
         content.addView(mSaveButton, margins(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, dp(12)));
-
-        mStatus = new TextView(this);
-        mStatus.setTextSize(13);
-        mStatus.setGravity(Gravity.CENTER);
-        mStatus.setTextColor(themeColorList(android.R.attr.textColorSecondary));
-        content.addView(mStatus, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, 0));
 
         return mScrollView;
     }
@@ -354,66 +356,131 @@ public class SettingsActivity extends Activity {
     // ---------------------------------------------------------------- drag to reorder
 
     /**
-     * Rows are swapped as soon as the pointer crosses into another row. Because every row has the
-     * same fixed height, the target index is simple arithmetic on the touch Y, which stays correct
-     * across the re-layouts that the swaps trigger.
+     * Continuous (floating) drag.
+     *
+     * <p>Every row is exactly {@link #mRowHeightPx} tall and the container has no padding, so slot
+     * {@code i} always starts at {@code i * rowHeight}. That makes the whole gesture exact
+     * arithmetic: the dragged row's {@code translationY} is recomputed from the finger position on
+     * every move, which is what keeps it glued to the finger, and its slot is derived by rounding
+     * the same value - so it moves any number of slots in one gesture.
      */
     private void attachDragHandle(View handle, ViewGroup row) {
         handle.setOnTouchListener((view, event) -> {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    mDraggingRow = row;
-                    // ViewGroup#requestDisallowInterceptTouchEvent propagates up the parent chain,
-                    // so this is what stops the ScrollView from stealing the gesture.
-                    row.requestDisallowInterceptTouchEvent(true);
-                    row.setAlpha(0.9f);
+                    startDrag(row, event.getRawY());
                     return true;
-                case MotionEvent.ACTION_MOVE: {
-                    View dragging = mDraggingRow;
-                    if (dragging == null) {
-                        return false;
-                    }
-                    int target = rowIndexAt(event.getRawY());
-                    int current = mItemContainer.indexOfChild(dragging);
-                    if (target >= 0 && current >= 0 && target != current) {
-                        mOrder.add(target, mOrder.remove(current));
-                        mItemContainer.removeViewAt(current);
-                        mItemContainer.addView(dragging, target);
-                        updateDividers();
-                    }
+                case MotionEvent.ACTION_MOVE:
+                    updateDrag(event.getRawY());
                     return true;
-                }
                 case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL: {
-                    View dragging = mDraggingRow;
-                    mDraggingRow = null;
-                    row.requestDisallowInterceptTouchEvent(false);
-                    if (dragging != null) {
-                        dragging.setAlpha(1f);
-                    }
+                case MotionEvent.ACTION_CANCEL:
+                    endDrag();
                     return true;
-                }
                 default:
                     return false;
             }
         });
     }
 
-    private int rowIndexAt(float rawY) {
-        int count = mItemContainer.getChildCount();
-        if (count == 0 || mRowHeightPx <= 0) {
-            return -1;
+    private void startDrag(ViewGroup row, float rawY) {
+        mDraggingRow = row;
+        // Stop the ScrollView (and everything above it) from stealing the gesture.
+        row.requestDisallowInterceptTouchEvent(true);
+        row.animate().cancel();
+        row.setTranslationY(0f);
+        row.setElevation(dp(6));
+        row.setBackground(floatingRowBackground());
+
+        int index = mItemContainer.indexOfChild(row);
+        mDragGrabOffset = rawY - (containerTopOnScreen() + index * (float) mRowHeightPx);
+        if (mDragGrabOffset < 0) {
+            mDragGrabOffset = 0;
         }
+        if (mDragGrabOffset > mRowHeightPx) {
+            mDragGrabOffset = mRowHeightPx;
+        }
+    }
+
+    private void updateDrag(float rawY) {
+        View dragging = mDraggingRow;
+        if (dragging == null) {
+            return;
+        }
+        int count = mItemContainer.getChildCount();
+        if (count == 0) {
+            return;
+        }
+        float desiredTop = rawY - containerTopOnScreen() - mDragGrabOffset;
+
+        int current = mItemContainer.indexOfChild(dragging);
+        int target = Math.round(desiredTop / mRowHeightPx);
+        if (target < 0) {
+            target = 0;
+        }
+        if (target > count - 1) {
+            target = count - 1;
+        }
+        if (target != current) {
+            moveRow(current, target);
+            current = target;
+        }
+        // Recompute from the finger every time: after a reorder the row's layout position changed,
+        // and this keeps it visually under the finger.
+        dragging.setTranslationY(desiredTop - current * (float) mRowHeightPx);
+    }
+
+    /** Moves the model entry and the view, and lets the rows in between slide to their new slot. */
+    private void moveRow(int from, int to) {
+        View dragging = mDraggingRow;
+        int count = mItemContainer.getChildCount();
+        View[] before = new View[count];
+        for (int i = 0; i < count; i++) {
+            before[i] = mItemContainer.getChildAt(i);
+        }
+
+        mOrder.add(to, mOrder.remove(from));
+        mItemContainer.removeViewAt(from);
+        mItemContainer.addView(dragging, to);
+        updateDividers();
+
+        for (int oldIndex = 0; oldIndex < count; oldIndex++) {
+            View child = before[oldIndex];
+            if (child == dragging) {
+                continue;
+            }
+            int newIndex = mItemContainer.indexOfChild(child);
+            if (newIndex == oldIndex) {
+                continue;
+            }
+            // Start where it used to be and slide into place.
+            child.animate().cancel();
+            child.setTranslationY((oldIndex - newIndex) * (float) mRowHeightPx);
+            child.animate().translationY(0f).setDuration(REORDER_ANIM_MS).start();
+        }
+    }
+
+    private void endDrag() {
+        final ViewGroup dragging = mDraggingRow;
+        mDraggingRow = null;
+        if (dragging == null) {
+            return;
+        }
+        dragging.requestDisallowInterceptTouchEvent(false);
+        dragging.animate()
+                .translationY(0f)
+                .setDuration(DROP_ANIM_MS)
+                .withEndAction(() -> {
+                    dragging.setBackground(null);
+                    dragging.setElevation(0f);
+                })
+                .start();
+    }
+
+    private float containerTopOnScreen() {
         int[] location = new int[2];
         mItemContainer.getLocationOnScreen(location);
-        int index = (int) ((rawY - location[1]) / mRowHeightPx);
-        if (index < 0) {
-            index = 0;
-        }
-        if (index > count - 1) {
-            index = count - 1;
-        }
-        return index;
+        return location[1];
     }
 
     // ---------------------------------------------------------------- theming helpers
@@ -448,20 +515,53 @@ public class SettingsActivity extends Activity {
         return background;
     }
 
+    /** Slightly accent-tinted surface so the row reads as lifted while it floats over the list. */
+    private Drawable floatingRowBackground() {
+        int surface = themeColor(android.R.attr.colorBackgroundFloating);
+        int accent = themeColor(android.R.attr.colorAccent);
+        GradientDrawable background = new GradientDrawable();
+        background.setShape(GradientDrawable.RECTANGLE);
+        background.setColor(blend(surface, accent, 0.12f));
+        background.setCornerRadius(dp(14));
+        int stroke = themeColor(android.R.attr.textColorSecondary);
+        background.setStroke(Math.max(1, Math.round(getResources().getDisplayMetrics().density / 2f)),
+                (stroke & 0x00FFFFFF) | 0x33000000);
+        return background;
+    }
+
     private int dividerColor() {
         int base = themeColor(android.R.attr.textColorSecondary);
         return (base & 0x00FFFFFF) | 0x1F000000;
     }
 
-    private void stylePrimaryButton(Button button) {
+    /** Capsule-shaped primary action. */
+    private void stylePillButton(Button button) {
         int accent = themeColor(android.R.attr.colorAccent);
-        button.setBackgroundTintList(ColorStateList.valueOf(accent));
+        int height = dp(52);
+
+        GradientDrawable shape = new GradientDrawable();
+        shape.setShape(GradientDrawable.RECTANGLE);
+        shape.setColor(accent);
+        // Radius >= half the height makes it a true capsule.
+        shape.setCornerRadius(height / 2f);
+        button.setBackground(new RippleDrawable(
+                ColorStateList.valueOf(0x33FFFFFF), shape, null));
+
         // Pick the label colour from the accent's luminance so it stays readable in both themes.
         double luminance = (0.299 * Color.red(accent)
                 + 0.587 * Color.green(accent)
                 + 0.114 * Color.blue(accent)) / 255d;
         button.setTextColor(luminance > 0.6 ? Color.BLACK : Color.WHITE);
-        button.setPadding(dp(24), dp(14), dp(24), dp(14));
+        button.setPadding(dp(24), 0, dp(24), 0);
+        button.setMinHeight(height);
+        button.setMinimumHeight(height);
+    }
+
+    private static int blend(int base, int overlay, float ratio) {
+        int r = Math.round(Color.red(base) * (1 - ratio) + Color.red(overlay) * ratio);
+        int g = Math.round(Color.green(base) * (1 - ratio) + Color.green(overlay) * ratio);
+        int b = Math.round(Color.blue(base) * (1 - ratio) + Color.blue(overlay) * ratio);
+        return Color.argb(255, r, g, b);
     }
 
     private LinearLayout.LayoutParams margins(int width, int height,

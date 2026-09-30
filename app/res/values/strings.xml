@@ -10,9 +10,8 @@
     <string name="settings_items_header">菜单项</string>
     <string name="settings_hint">拖动左侧手柄排序；关机与重启为必选项，不可关闭。</string>
     <string name="settings_save">保存并应用</string>
-    <string name="settings_applying">正在应用…</string>
-    <string name="settings_applied">已保存，系统界面正在重启，稍后长按电源键查看效果</string>
-    <string name="settings_not_applied">已保存，但没能联系到系统界面：请确认模块已启用，再重启系统界面或手机</string>
+    <string name="settings_applied">已应用，系统界面重启中</string>
+    <string name="settings_not_applied">未生效：请确认模块已启用</string>
 
     <!-- Menu item descriptions (settings list) -->
     <string name="item_power_desc">关机（长按进入安全模式）</string>
@@ -30,5 +29,5 @@
     <string name="reboot_recovery_confirm">确定要重启到恢复模式（Recovery）吗？</string>
     <string name="reboot_confirm_ok">确定</string>
     <string name="reboot_confirm_cancel">取消</string>
-    <string name="reboot_unavailable">重启失败：请在 LSPosed 中把本模块的作用域加上「系统框架（android）」，再重启手机</string>
+    <string name="reboot_unavailable">重启失败：请勾选「系统」作用域</string>
 </resources>
