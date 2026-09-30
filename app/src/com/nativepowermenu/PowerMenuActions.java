@@ -50,6 +50,9 @@ final class PowerMenuActions {
     /** {@code UserHandle.USER_ALL}. */
     private static final int USER_ALL = -1;
 
+    /** Extra wait before capturing, so the power menu is really gone from the screen. */
+    private static final long SCREENSHOT_DELAY_MS = 500L;
+
     private final Context mContext;
     private final ClassLoader mClassLoader;
     private final Resources mSysUiRes;
@@ -235,7 +238,17 @@ final class PowerMenuActions {
         }
     }
 
+    /**
+     * AOSP delays the capture on purpose ("to give the dialog a chance to go away before it takes a
+     * screenshot"); the dialog itself is already dismissed by the caller, but the window removal is
+     * asynchronous, so wait a little longer before asking for the shot.
+     */
     private void takeScreenshot() {
+        new Handler(Looper.getMainLooper())
+                .postDelayed(this::doTakeScreenshot, SCREENSHOT_DELAY_MS);
+    }
+
+    private void doTakeScreenshot() {
         try {
             Class<?> helperClass = XposedHelpers.findClass(
                     "com.android.internal.util.ScreenshotHelper", mClassLoader);
@@ -251,16 +264,25 @@ final class PowerMenuActions {
 
     private void lockDown() {
         try {
-            Class<?> utilsClass = XposedHelpers.findClass(
-                    "com.android.internal.widget.LockPatternUtils", mClassLoader);
-            Object utils = XposedHelpers.newInstance(utilsClass, mContext);
-            XposedHelpers.callMethod(utils, "requireStrongAuth",
-                    STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN, USER_ALL);
+            Object utils = newLockPatternUtils();
+            if (utils == null) {
+                return;
+            }
+            XposedHelpers.findMethodExact(utils.getClass(), "requireStrongAuth", int.class, int.class)
+                    .invoke(utils, STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN, USER_ALL);
 
             Object windowManager = XposedHelpers.callStaticMethod(
                     XposedHelpers.findClass("android.view.WindowManagerGlobal", mClassLoader),
                     "getWindowManagerService");
-            XposedHelpers.callMethod(windowManager, "lockNow", new Object[]{null});
+            // IWindowManager.lockNow(Bundle) is hidden and the argument is null, so resolve the
+            // method by shape instead of by argument type.
+            for (Method method : windowManager.getClass().getMethods()) {
+                if ("lockNow".equals(method.getName())
+                        && method.getParameterTypes().length == 1) {
+                    method.invoke(windowManager, new Object[]{null});
+                    break;
+                }
+            }
         } catch (Throwable t) {
             ModuleLog.e("lockdown failed", t);
         }
@@ -269,16 +291,9 @@ final class PowerMenuActions {
     // ---------------------------------------------------------------- capability probes
 
     private boolean isKeyguardSecure() {
-        if (mKeyguardStateController == null) {
-            return false;
-        }
-        try {
-            Object secure = XposedHelpers.callMethod(mKeyguardStateController, "isMethodSecure");
-            return secure instanceof Boolean && (Boolean) secure;
-        } catch (Throwable t) {
-            ModuleLog.w("could not query keyguard security: " + t);
-            return false;
-        }
+        // ColorOS only exposes this as KeyguardStateControllerImpl.mSecure; the interface has
+        // neither isShowing() nor isMethodSecure(), unlike AOSP.
+        return Reflect.booleanValue(mKeyguardStateController, "mSecure", "isMethodSecure", false);
     }
 
     /**
@@ -288,15 +303,28 @@ final class PowerMenuActions {
      */
     private boolean isLockdownAllowed() {
         try {
-            Class<?> utilsClass = XposedHelpers.findClass(
-                    "com.android.internal.widget.LockPatternUtils", mClassLoader);
-            Object utils = XposedHelpers.newInstance(utilsClass, mContext);
-            int state = (Integer) XposedHelpers.callMethod(
-                    utils, "getStrongAuthForUser", currentUserId());
+            Object utils = newLockPatternUtils();
+            if (utils == null) {
+                return false;
+            }
+            int state = (Integer) XposedHelpers.findMethodExact(
+                    utils.getClass(), "getStrongAuthForUser", int.class)
+                    .invoke(utils, currentUserId());
             return state == 0 || state == 4;
         } catch (Throwable t) {
             ModuleLog.w("could not query strong auth state: " + t);
             return false;
+        }
+    }
+
+    private Object newLockPatternUtils() {
+        try {
+            Class<?> utilsClass = XposedHelpers.findClass(
+                    "com.android.internal.widget.LockPatternUtils", mClassLoader);
+            return XposedHelpers.newInstance(utilsClass, mContext);
+        } catch (Throwable t) {
+            ModuleLog.w("could not create LockPatternUtils: " + t);
+            return null;
         }
     }
 

@@ -168,3 +168,24 @@ mOplusShutdownViewContainer  : androidx.constraintlayout.widget.ConstraintLayout
 - 已经显示时再次调用 → `onGlobalActionsShown()` 然后 `dismiss()`
 - 否则建 `ActionsDialog` → `show()` → `onGlobalActionsShown()`
 - `onDismiss()` → `onGlobalActionsHidden()`
+
+## 6. 模块引用的符号逐个静态校验
+
+模块全部通过反射调用系统内部实现，所以每个名字都在设备字节码里核对过
+（`SystemUI.apk` 的 7 个 dex + `/system/framework/framework.jar` 的 6 个 dex）。
+
+| 引用 | 结论 |
+| --- | --- |
+| `globalactions.GlobalActionsImpl` | 存在，且是**唯一**实现 `plugins.GlobalActions` 的类（`GlobalActionsImpl_Factory` 提供它） |
+| `GlobalActionsImpl#showGlobalActions` | 存在且是 `GlobalActions` 接口的抽象方法 |
+| `GlobalActionsImpl.mContext / mDisabled / mKeyguardStateController / mDeviceProvisionedController` | 4 个字段都在 |
+| `GlobalActionsManager#shutdown / reboot(Z) / onGlobalActionsShown / onGlobalActionsHidden` | 4 个抽象方法都在 |
+| `KeyguardStateController` | **本 ROM 是精简接口**：只有 `getDismissAmount/getEx/isUnlocked/isVisible/…`，**没有** `isShowing()`、`isMethodSecure()`；对应值是 `KeyguardStateControllerImpl` 的 `mShowing` / `mSecure` 字段 → 模块先读字段、再退回方法 |
+| `DeviceProvisionedControllerImpl#isDeviceProvisioned` | 存在（接口上只有 `getCurrentUser`） |
+| `com.android.internal.widget.LockPatternUtils` | 在 `framework.jar` 的 `classes6.dex`；`<init>(Context)`、`requireStrongAuth(II)`、`getStrongAuthForUser(I)` 都在 |
+| `com.android.internal.util.ScreenshotHelper` | `<init>(Context)`、`takeScreenshot(ILandroid/os/Handler;Ljava/util/function/Consumer;)` 都在 |
+| `android.view.WindowManagerGlobal#getWindowManagerService` | 存在；`IWindowManager#lockNow(Bundle)` 存在 |
+| 窗口类型 `0x7e1` | 就是 `WindowManager.LayoutParams.TYPE_STATUS_BAR_SUB_PANEL`（与 `SystemUIDialog` 一致） |
+| SystemUI 资源 `global_actions_lite_padding` / `_corner_radius` / `_button_size` / `_button_padding` / `_grid_container_bottom_margin` / `_translate` / `_lite_background` / `_lite_button_background` / `_lite_text` / `_lite_emergency_icon` / `_lite_emergency_background` / `power_menu_lite_max_columns` | 全部存在 |
+| 主题 `Theme.SystemUI.Dialog.GlobalActions` | 存在（注意资源名用点号，不是 R 类里的下划线形式） |
+

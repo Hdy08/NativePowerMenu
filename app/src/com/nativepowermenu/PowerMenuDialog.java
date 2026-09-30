@@ -12,6 +12,8 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
@@ -43,6 +45,9 @@ final class PowerMenuDialog {
     /** {@code Context.RECEIVER_NOT_EXPORTED} (API 33+, not present in older compile SDKs). */
     private static final int RECEIVER_NOT_EXPORTED = 0x4;
 
+    /** Delay between dismissing the dialog and running the action it triggered. */
+    private static final long ACTION_DELAY_MS = 200L;
+
     private static final int FALLBACK_PANEL_COLOR = 0xFF191C18;
     private static final int FALLBACK_BUTTON_COLOR = 0xFF303030;
     private static final int FALLBACK_TEXT_COLOR = 0xFFF0F0F0;
@@ -51,6 +56,7 @@ final class PowerMenuDialog {
 
     private final Context mContext;
     private final PowerMenuActions mActions;
+    private final Handler mHandler = new Handler(Looper.getMainLooper());
 
     private Dialog mDialog;
     private BroadcastReceiver mReceiver;
@@ -122,13 +128,15 @@ final class PowerMenuDialog {
     private Context themedContext() {
         int theme = ResourceLookup.styleId(
                 mContext.getResources(), ResourceLookup.PKG_SYSTEMUI,
-                "Theme_SystemUI_Dialog_GlobalActions");
+                "Theme.SystemUI.Dialog.GlobalActions");
         if (theme != 0) {
             try {
                 return new ContextThemeWrapper(mContext, theme);
             } catch (Throwable t) {
-                ModuleLog.w("could not apply Theme_SystemUI_Dialog_GlobalActions: " + t);
+                ModuleLog.w("could not apply Theme.SystemUI.Dialog.GlobalActions: " + t);
             }
+        } else {
+            ModuleLog.w("Theme.SystemUI.Dialog.GlobalActions not found, using the app theme");
         }
         return mContext;
     }
@@ -143,6 +151,11 @@ final class PowerMenuDialog {
         window.setLayout(WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT);
         window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        WindowManager.LayoutParams attrs = window.getAttributes();
+        // Same as the ColorOS dialog: never let the cutout push the panel around.
+        attrs.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        window.setAttributes(attrs);
     }
 
     private void registerReceiver() {
@@ -218,6 +231,9 @@ final class PowerMenuDialog {
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
         lp.gravity = Gravity.CENTER;
         root.addView(panel, lp);
+        // The window fills the screen, so "tap outside" means "tap on this transparent root".
+        // setCanceledOnTouchOutside() would never fire for a full-screen window.
+        root.setOnClickListener(v -> dismiss());
         return root;
     }
 
@@ -269,14 +285,17 @@ final class PowerMenuDialog {
         labelParams.topMargin = metrics.labelMargin;
         container.addView(label, labelParams);
 
+        // Run the action from a Handler, not from the view: dismiss() detaches the view and
+        // View#postDelayed on a detached view may never run. The delay also lets the window go away
+        // first, which matters for the screenshot entry.
         container.setOnClickListener(v -> {
             dismiss();
-            v.postDelayed(item.onPress, 0);
+            mHandler.postDelayed(item.onPress, ACTION_DELAY_MS);
         });
         if (item.onLongPress != null) {
             container.setOnLongClickListener(v -> {
                 dismiss();
-                v.postDelayed(item.onLongPress, 0);
+                mHandler.postDelayed(item.onLongPress, ACTION_DELAY_MS);
                 return true;
             });
         }

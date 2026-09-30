@@ -80,8 +80,12 @@ final class GlobalActionsHook {
         Object provisionController = XposedHelpers.getObjectField(
                 globalActionsImpl, "mDeviceProvisionedController");
 
-        boolean keyguardShowing = booleanOf(keyguardController, "isShowing", false);
-        boolean deviceProvisioned = booleanOf(provisionController, "isDeviceProvisioned", true);
+        // KeyguardStateController is a minimal interface on ColorOS: mShowing only exists as a
+        // field on the Impl, so read tolerantly through both shapes.
+        boolean keyguardShowing = Reflect.booleanValue(
+                keyguardController, "mShowing", "isShowing", false);
+        boolean deviceProvisioned = Reflect.booleanValue(
+                provisionController, null, "isDeviceProvisioned", true);
 
         ModuleLog.d("power menu requested (keyguardShowing=" + keyguardShowing
                 + ", deviceProvisioned=" + deviceProvisioned + ")");
@@ -94,18 +98,5 @@ final class GlobalActionsHook {
             mDialog = new PowerMenuDialog(context, new PowerMenuActions(context, mClassLoader));
         }
         return mDialog;
-    }
-
-    private static boolean booleanOf(Object target, String method, boolean fallback) {
-        if (target == null) {
-            return fallback;
-        }
-        try {
-            Object value = XposedHelpers.callMethod(target, method);
-            return value instanceof Boolean ? (Boolean) value : fallback;
-        } catch (Throwable t) {
-            ModuleLog.w("could not call " + method + "(): " + t);
-            return fallback;
-        }
     }
 }
