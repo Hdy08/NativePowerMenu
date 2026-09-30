@@ -189,7 +189,7 @@ mOplusShutdownViewContainer  : androidx.constraintlayout.widget.ConstraintLayout
 | SystemUI 资源 `global_actions_lite_padding` / `_corner_radius` / `_button_size` / `_button_padding` / `_grid_container_bottom_margin` / `_translate` / `_lite_background` / `_lite_button_background` / `_lite_text` / `_lite_emergency_icon` / `_lite_emergency_background` / `power_menu_lite_max_columns` | 全部存在 |
 | 主题 `Theme.SystemUI.Dialog.GlobalActions` | 存在（注意资源名用点号，不是 R 类里的下划线形式） |
 | SystemUI 布局 `global_actions_grid_lite` / `global_actions_grid_item_lite` + id `list_flow` / `global_actions_container` | 全部存在，且是 AOSP 原版（见下节） |
-| `com.android.systemui.statusbar.phone.SystemUIDialog` | `extends AlertDialog`，`<init>(Context)` 存在（扩展项的确认框用它） |
+| `com.android.systemui.statusbar.phone.SystemUIDialog` | `extends AlertDialog`，`<init>(Context)` 存在（模块早期版本用它做过扩展项的确认框，现已去掉确认步骤） |
 | `com.android.server.statusbar.StatusBarManagerService` | 在 `services.jar`；`extends IStatusBarService.Stub`，`setIcon(String,String,int,int,String)` 与 `reboot(boolean)` 都在 |
 | `android.os.IPowerManager#reboot(Z,String,Z)` | 存在；系统进程调用时权限天然满足 |
 

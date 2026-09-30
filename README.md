@@ -49,10 +49,11 @@
 
 | 菜单项 | 行为 |
 | --- | --- |
-| 引导模式 | 确认后 `PowerManager.reboot("bootloader")` |
-| 恢复模式 | 确认后 `PowerManager.reboot("recovery")` |
+| 引导模式 | 点击直接 `PowerManager.reboot("bootloader")` |
+| 恢复模式 | 点击直接 `PowerManager.reboot("recovery")` |
 
-这两项**不是 AOSP 自带的**，所以点击后先弹一个 `SystemUIDialog` 确认，避免误触。
+这两项**不是 AOSP 自带的**，但形态与其它项完全一致：点一下就重启，**没有二次确认框**
+（进 fastboot 后是音量键选择、长按电源键退出）。
 
 难点在于权限：SystemUI **没有** `android.permission.REBOOT`（`dumpsys package com.android.systemui`
 里连申请都没有），而 `PowerManager.reboot(String)` 是在 system_server 里做权限检查的。

@@ -133,47 +133,4 @@ final class PowerMenuItems {
                 return key;
         }
     }
-
-    /** One-line explanation shown under the label in the settings list. */
-    static CharSequence description(Context context, String key) {
-        switch (key) {
-            case POWER:
-                return ModuleResources.string(context, R.string.item_power_desc,
-                        "Shut the device down (long press: safe mode)");
-            case RESTART:
-                return ModuleResources.string(context, R.string.item_restart_desc,
-                        "Reboot the device");
-            case SCREENSHOT:
-                return ModuleResources.string(context, R.string.item_screenshot_desc,
-                        "Capture the screen");
-            case EMERGENCY:
-                return ModuleResources.string(context, R.string.item_emergency_desc,
-                        "Open the emergency dialer");
-            case LOCKDOWN:
-                return ModuleResources.string(context, R.string.item_lockdown_desc,
-                        "Lock down and disable biometrics");
-            case BOOTLOADER:
-                return ModuleResources.string(context, R.string.item_bootloader_desc,
-                        "Reboot into fastboot");
-            case RECOVERY:
-                return ModuleResources.string(context, R.string.item_recovery_desc,
-                        "Reboot into recovery");
-            default:
-                return "";
-        }
-    }
-
-    /** Body of the confirmation dialog a destructive extended entry shows before acting. */
-    static CharSequence confirmationMessage(Context context, String key) {
-        switch (key) {
-            case BOOTLOADER:
-                return ModuleResources.string(context, R.string.reboot_bootloader_confirm,
-                        "Reboot to bootloader?");
-            case RECOVERY:
-                return ModuleResources.string(context, R.string.reboot_recovery_confirm,
-                        "Reboot to recovery?");
-            default:
-                return description(context, key);
-        }
-    }
 }

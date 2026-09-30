@@ -30,7 +30,7 @@ import de.robv.android.xposed.XposedHelpers;
  *   <li>{@code emergency} -&gt; {@code ACTION_EMERGENCY_ASSISTANCE}
  *   <li>{@code lockdown} -&gt; {@code LockPatternUtils.requireStrongAuth()} + {@code IWindowManager.lockNow()}
  *   <li>{@code bootloader} / {@code recovery} -&gt; the extended entries, which need the system
- *       process (see {@link RebootBridge}) and therefore ask for confirmation first
+ *       process (see {@link RebootBridge}); a tap reboots immediately, with no confirmation step
  * </ul>
  */
 final class PowerMenuActions {
@@ -94,7 +94,7 @@ final class PowerMenuActions {
             switch (key) {
                 case PowerMenuItems.POWER:
                     items.add(new PowerMenuItem(key, PowerMenuItems.icon(mContext, key),
-                            PowerMenuItems.label(mContext, key), false, null, null,
+                            PowerMenuItems.label(mContext, key), false,
                             () -> invokeManager("shutdown"),
                             () -> invokeManager("reboot", Boolean.TRUE)));
                     break;
@@ -119,10 +119,10 @@ final class PowerMenuActions {
                     }
                     break;
                 case PowerMenuItems.BOOTLOADER:
-                    items.add(confirmed(key, () -> rebootTo(RebootBridge.REASON_BOOTLOADER)));
+                    items.add(simple(key, () -> rebootTo(RebootBridge.REASON_BOOTLOADER)));
                     break;
                 case PowerMenuItems.RECOVERY:
-                    items.add(confirmed(key, () -> rebootTo(RebootBridge.REASON_RECOVERY)));
+                    items.add(simple(key, () -> rebootTo(RebootBridge.REASON_RECOVERY)));
                     break;
                 default:
                     // Unknown key: skip rather than showing a dead button.
@@ -136,14 +136,7 @@ final class PowerMenuActions {
         return new PowerMenuItem(key, PowerMenuItems.icon(mContext, key),
                 PowerMenuItems.label(mContext, key),
                 PowerMenuItems.EMERGENCY.equals(key),
-                null, null, onPress, null);
-    }
-
-    /** Extended entry: the label doubles as the confirmation title, plus an explanatory message. */
-    private PowerMenuItem confirmed(String key, Runnable onPress) {
-        CharSequence label = PowerMenuItems.label(mContext, key);
-        return new PowerMenuItem(key, PowerMenuItems.icon(mContext, key), label, false,
-                label, PowerMenuItems.confirmationMessage(mContext, key), onPress, null);
+                onPress, null);
     }
 
     // ---------------------------------------------------------------- actions

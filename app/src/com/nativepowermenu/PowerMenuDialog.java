@@ -1,10 +1,8 @@
 package com.nativepowermenu;
 
-import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.ColorStateList;
@@ -364,7 +362,7 @@ final class PowerMenuDialog {
         // first, which matters for the screenshot entry.
         itemView.setOnClickListener(v -> {
             dismiss();
-            mHandler.postDelayed(() -> runItem(item), ACTION_DELAY_MS);
+            mHandler.postDelayed(item.onPress, ACTION_DELAY_MS);
         });
         if (item.onLongPress != null) {
             itemView.setOnLongClickListener(v -> {
@@ -372,64 +370,6 @@ final class PowerMenuDialog {
                 mHandler.postDelayed(item.onLongPress, ACTION_DELAY_MS);
                 return true;
             });
-        }
-    }
-
-    private void runItem(PowerMenuItem item) {
-        if (!item.needsConfirmation()) {
-            item.onPress.run();
-            return;
-        }
-        showConfirmation(item);
-    }
-
-    /**
-     * The extended entries ask before rebooting - a stray tap must not drop the phone into fastboot.
-     * AOSP has no such dialog, so this reuses SystemUI's own {@code SystemUIDialog} (the class
-     * MIUI-style extended power menus use) and falls back to a plain {@link AlertDialog}.
-     */
-    private void showConfirmation(PowerMenuItem item) {
-        DialogInterface.OnClickListener confirm = (dialog, which) ->
-                mHandler.postDelayed(item.onPress, ACTION_DELAY_MS);
-
-        try {
-            Class<?> systemUiDialog = XposedHelpers.findClass(
-                    "com.android.systemui.statusbar.phone.SystemUIDialog", mClassLoader);
-            Object instance = XposedHelpers.newInstance(systemUiDialog, mContext);
-            AlertDialog dialog = (AlertDialog) instance;
-            dialog.setTitle(item.confirmTitle);
-            dialog.setMessage(item.confirmMessage);
-            dialog.setButton(DialogInterface.BUTTON_POSITIVE,
-                    ModuleResources.string(mContext, R.string.reboot_confirm_ok, "OK"), confirm);
-            dialog.setButton(DialogInterface.BUTTON_NEGATIVE,
-                    ModuleResources.string(mContext, R.string.reboot_confirm_cancel, "Cancel"),
-                    (DialogInterface.OnClickListener) null);
-            dialog.show();
-        } catch (Throwable t) {
-            ModuleLog.w("SystemUIDialog unavailable, using a plain AlertDialog", t);
-            int theme = ResourceLookup.styleId(mContext.getResources(), PKG,
-                    "Theme.SystemUI.Dialog.GlobalActions");
-            AlertDialog.Builder builder = theme != 0
-                    ? new AlertDialog.Builder(mContext, theme)
-                    : new AlertDialog.Builder(mContext);
-            builder.setTitle(item.confirmTitle)
-                    .setMessage(item.confirmMessage)
-                    .setPositiveButton(
-                            ModuleResources.string(mContext, R.string.reboot_confirm_ok, "OK"),
-                            confirm)
-                    .setNegativeButton(
-                            ModuleResources.string(
-                                    mContext, R.string.reboot_confirm_cancel, "Cancel"),
-                            null);
-            AlertDialog fallback = builder.create();
-            Window window = fallback.getWindow();
-            if (window != null) {
-                // An application-context dialog must not use TYPE_APPLICATION, or the window
-                // manager rejects it for having no window token.
-                window.setType(TYPE_STATUS_BAR_SUB_PANEL);
-                window.addFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
-            }
-            fallback.show();
         }
     }
 
@@ -477,7 +417,7 @@ final class PowerMenuDialog {
 
             row.setOnClickListener(v -> {
                 dismiss();
-                mHandler.postDelayed(() -> runItem(item), ACTION_DELAY_MS);
+                mHandler.postDelayed(item.onPress, ACTION_DELAY_MS);
             });
             list.addView(row);
         }

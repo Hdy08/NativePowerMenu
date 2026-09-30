@@ -11,21 +11,8 @@
     <string name="settings_applied">已应用，系统界面重启中</string>
     <string name="settings_not_applied">未生效：请确认模块已启用</string>
 
-    <!-- Menu item descriptions (settings list) -->
-    <string name="item_power_desc">关机（长按进入安全模式）</string>
-    <string name="item_restart_desc">重新启动设备</string>
-    <string name="item_screenshot_desc">截取当前屏幕</string>
-    <string name="item_emergency_desc">打开紧急呼叫</string>
-    <string name="item_lockdown_desc">锁定设备并停用生物识别</string>
-    <string name="item_bootloader_desc">重启到引导模式（Fastboot）</string>
-    <string name="item_recovery_desc">重启到恢复模式（Recovery）</string>
-
     <!-- Extended power menu entries -->
     <string name="reboot_bootloader_title">引导模式</string>
-    <string name="reboot_bootloader_confirm">确定要重启到引导模式（Bootloader）吗？\n重启后需要用音量键操作，长按电源键可退出。</string>
     <string name="reboot_recovery_title">恢复模式</string>
-    <string name="reboot_recovery_confirm">确定要重启到恢复模式（Recovery）吗？</string>
-    <string name="reboot_confirm_ok">确定</string>
-    <string name="reboot_confirm_cancel">取消</string>
     <string name="reboot_unavailable">重启失败：请勾选「系统」作用域</string>
 </resources>
