@@ -380,8 +380,16 @@ final class PowerMenuDialog {
                     .setNegativeButton(
                             ModuleResources.string(
                                     mContext, R.string.reboot_confirm_cancel, "Cancel"),
-                            null)
-                    .show();
+                            null);
+            AlertDialog fallback = builder.create();
+            Window window = fallback.getWindow();
+            if (window != null) {
+                // An application-context dialog must not use TYPE_APPLICATION, or the window
+                // manager rejects it for having no window token.
+                window.setType(TYPE_STATUS_BAR_SUB_PANEL);
+                window.addFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+            }
+            fallback.show();
         }
     }
 

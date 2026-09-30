@@ -99,6 +99,7 @@ final class PowerMenuActions {
                 .hasSystemFeature(PackageManager.FEATURE_TELEPHONY);
         boolean secure = isKeyguardSecure();
         boolean provisioned = deviceProvisioned;
+        boolean extendedAdded = false;
 
         for (String key : resolveKeys()) {
             switch (key) {
@@ -108,6 +109,10 @@ final class PowerMenuActions {
                     break;
                 case KEY_RESTART:
                     items.add(restartItem());
+                    // Keep the two extended entries next to Restart; with two columns in the grid
+                    // that puts them side by side instead of splitting them across rows.
+                    addExtendedItems(items);
+                    extendedAdded = true;
                     break;
                 case KEY_EMERGENCY:
                     if (telephony) {
@@ -132,11 +137,17 @@ final class PowerMenuActions {
             }
         }
 
-        // The extended entries are the point of this module, so they are appended rather than being
-        // subject to the device's own config_globalActionsList.
+        // The extended entries are the point of this module, so they are not subject to the device's
+        // own config_globalActionsList.
+        if (!extendedAdded) {
+            addExtendedItems(items);
+        }
+        return items;
+    }
+
+    private void addExtendedItems(List<PowerMenuItem> items) {
         items.add(bootloaderItem());
         items.add(recoveryItem());
-        return items;
     }
 
     /**
