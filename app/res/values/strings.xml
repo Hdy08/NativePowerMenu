@@ -1,14 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">原生电源菜单</string>
-    <string name="module_description">把 ColorOS / Oplus 的电源菜单替换回原生 Android (AOSP) 样式，并可扩展引导模式 / 恢复模式，仅对 SystemUI 生效。</string>
+    <string name="module_description">把 ColorOS 的电源菜单替换回原生 Android (AOSP) 样式，并可扩展引导模式 / 恢复模式，仅对 SystemUI 生效。</string>
 
     <!-- Settings screen -->
-    <string name="settings_subtitle">长按电源键弹出的菜单</string>
     <string name="settings_enable">启用模块</string>
-    <string name="settings_enable_desc">关闭后立即恢复 ColorOS 原有关机界面</string>
-    <string name="settings_items_header">菜单项</string>
-    <string name="settings_hint">拖动左侧手柄排序；关机与重启为必选项，不可关闭。</string>
+    <string name="settings_enable_desc">关闭后恢复 ColorOS 默认电源菜单</string>
+    <string name="settings_items_header">电源菜单项</string>
     <string name="settings_save">保存并应用</string>
     <string name="settings_applied">已应用，系统界面重启中</string>
     <string name="settings_not_applied">未生效：请确认模块已启用</string>

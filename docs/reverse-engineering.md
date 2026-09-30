@@ -391,4 +391,17 @@ LSPosed 作用域选择器里 system_server 对应的是包名 `system`（不是
 实测勾选 `system` 后模块才会被注入系统进程，日志里表现为行首的 `(system)`。
 模块的 `xposed_scope` 现在把 `android` 和 `system` 都列上了。
 
+## 9. 模块自己的界面不会自动避让系统栏
+
+菜单本身是 AOSP 原版布局，但它落在两种「系统不帮忙避让」的窗口里，所以两处都得自己算 inset：
+
+- **设置页（`SettingsActivity`）**：模块 `targetSdk 36`，Android 16 对 targetSdk ≥ 35 的应用强制
+  edge-to-edge，`setDecorFitsSystemWindows(true)` 也已经不起作用。窗口铺满整屏、状态栏直接压在内容
+  之上，所以内容内边距里必须加上 `systemBars() | displayCutout()` 的 inset，否则列表第一行会钻到
+  状态栏下面。`OnApplyWindowInsetsListener` 在第一次 traversal 就会回调，因此首帧就是对的。
+- **电源菜单窗口**：沿用 ColorOS / AOSP 的窗口参数 —— `TYPE_STATUS_BAR_SUB_PANEL`(2017) + 全屏 +
+  `LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS`。2017 的层级在状态栏（2000）之上，WindowManager 不会替它
+  避让；而且窗口本身是全屏的（否则 `FLAG_DIM_BEHIND` 的遮罩盖不满整屏），所以只能在 inflate 出来的
+  根布局上按 inset 加内边距，`ConstraintLayout` 才会把面板居中到安全区里。
+
 

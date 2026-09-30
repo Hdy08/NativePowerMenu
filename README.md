@@ -56,11 +56,17 @@
 
 难点在于权限：SystemUI **没有** `android.permission.REBOOT`（`dumpsys package com.android.systemui`
 里连申请都没有），而 `PowerManager.reboot(String)` 是在 system_server 里做权限检查的。
-所以模块同时注入 `android` 进程，并借用一个已经废弃的 binder 方法
-`IStatusBarService.setIcon(String slot, …)` 当私有通道：SystemUI 用带 magic 前缀的 slot 调它，
-system_server 侧的钩子识别前缀、吞掉这次调用（不会污染状态栏图标表），
-再以系统进程身份调用 `IPowerManager.reboot` —— 这条路正是 ColorOS 自己的
-`StatusBarManagerService.reboot(boolean)` 走的路，权限天然满足。
+所以模块同时注入 `system` 进程，并借用一个只读的 binder 方法
+`IStatusBarService.getDisableFlags(IBinder, int)` 当私有通道：SystemUI 用 `null` token + magic 的
+`userId` 调它，system_server 侧的钩子识别 magic、吞掉这次调用（真实实现按 token 查不到记录，
+本来也只返回 `{0, 0}`，不会有副作用），再以系统进程身份调用 `IPowerManager.reboot` ——
+这条路正是 ColorOS 自己的 `StatusBarManagerService.reboot(boolean)` 走的路，权限天然满足。
+挑这个方法的另一个原因是它**有返回值**：system_server 能把 ACK / NAK 回给 SystemUI，
+于是「对面根本没加载」和「重启本身失败」能被区分开，而不是静默失败。
+
+> 嵌套的同进程 binder 调用会继承调用方的 uid，所以 system_server 侧在 `IPowerManager.reboot` 前
+> 必须 `Binder.clearCallingIdentity()`，否则 `PowerManagerService` 看到的是 SystemUI 的 uid 10237，
+> 直接抛 `SecurityException: ... does not have android.permission.REBOOT`。
 
 ## 设置界面
 
@@ -68,13 +74,11 @@ system_server 侧的钩子识别前缀、吞掉这次调用（不会污染状态
 搭出 AOSP 设置风格的界面，不引入 Material Components 依赖：
 
 ```
-原生电源菜单
-长按电源键弹出的菜单
 ┌──────────────────────────────┐
-│ 启用模块              [ ●——] │   总开关，关掉立刻回到 ColorOS 原界面
-│ 关闭后立即恢复 ColorOS 原有关机界面 │
+│ 启用模块              [ ●——] │   总开关，关掉立刻回到 ColorOS 默认电源菜单
+│ 关闭后恢复 ColorOS 默认电源菜单   │
 └──────────────────────────────┘
-菜单项
+电源菜单项
 ┌──────────────────────────────┐
 │ ⠿  ⏻  关机          [——●] │   关机 / 重启 是必选项，开关置灰常开
 │ ⠿  ↻  重启          [——●] │
@@ -83,15 +87,20 @@ system_server 侧的钩子识别前缀、吞掉这次调用（不会污染状态
 │ ⠿  ⬓  引导模式       [●——] │
 │ ⠿  ⬓  恢复模式       [●——] │
 └──────────────────────────────┘
-拖动左侧手柄排序；关机与重启为必选项，不可关闭。
 
         [   保存并应用   ]
 ```
 
-- **拖动排序**：只给左侧手柄挂触摸监听，行高固定，因此目标下标可以直接由触摸 Y 算出来；
-  越过其它行就立即交换。拖拽期间禁止 `ScrollView` 抢手势。
+- **拖动排序**：只有被抓住的那一行会动。按下时从实际布局里读出列表首尾槽位，拖动过程中
+  `translationY` 每帧按手指位置重算（上下限夹在首尾槽位之间），所以一次手势就能连续拖到列表内
+  任意位置，也不会跑出列表。整个过程不改顺序、不让其它行动，松手时再按「视觉中心最近的槽位」落位，
+  中间被让开的行用 140ms 滑动补位。整条链路上的 `clipChildren` 都关掉了，抬起来的行靠
+  `setElevation` 浮在列表之上（`ViewGroup` 会按 Z 重排绘制顺序）。
+- **避让系统栏**：模块 `targetSdk 36`，Android 强制 edge-to-edge，设置页把系统栏 + 挖孔 inset
+  加进内容内边距；电源菜单那个窗口是全屏、且层级在状态栏之上（`TYPE_STATUS_BAR_SUB_PANEL`），
+  系统不会替它避让，同样按 inset 加内边距，保证菜单顶部元素不会跑进状态栏。
 - **保存并应用**：写入设置 → 有序广播推给 SystemUI → SystemUI 存盘并重启自己（它是 persistent 应用，
-  被系统立刻拉回）。广播的结果码用来判断是否真的送达，没送到会提示「模块没跑起来」。
+  被系统立刻拉回）。广播的结果码用来判断是否真的送达，没送到会提示「未生效：请确认模块已启用」。
 - 打开设置页时会静默重推一次已保存的值（不重启），因此「先配置、后启用模块」也不会丢配置。
 - 广播由模块自己声明的 signature 权限保护，SystemUI 注册时要求发送方持有该权限，
   别的应用无法通过这个通道重启 SystemUI。

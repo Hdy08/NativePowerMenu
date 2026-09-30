@@ -9,6 +9,7 @@ import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.content.res.TypedArray;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -18,6 +19,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -39,15 +41,19 @@ import java.util.Set;
  * design language (and the system light/dark mode) without bundling Material Components.
  *
  * <p>The list is a plain {@code LinearLayout} of fixed-height rows: one row per power-menu entry,
- * with a drag handle on the left and a switch on the right. While dragging, the grabbed row follows
- * the finger continuously (it floats above the list on its own background) and the rows it passes
- * slide out of the way; the order is only committed to the model as the row crosses slot
- * boundaries.
+ * with a drag handle on the left and a switch on the right.
+ *
+ * <p>Dragging is deliberately two-phase. While the finger is down the grabbed row is the only thing
+ * that moves: it floats above the list on its own background and its {@code translationY} is
+ * recomputed from the raw finger position on every event, so it tracks the finger exactly and can
+ * travel any distance in either direction, clamped only to the ends of the list. No other row moves
+ * and the order is untouched until the finger comes up, at which point the row settles into the slot
+ * nearest to where it was dropped and the rows in between slide to their new positions.
  */
 public class SettingsActivity extends Activity {
 
     private static final long REORDER_ANIM_MS = 140L;
-    private static final long DROP_ANIM_MS = 120L;
+    private static final long DROP_ANIM_MS = 160L;
 
     private final List<String> mOrder = new ArrayList<>();
     private final Set<String> mDisabled = new LinkedHashSet<>();
@@ -55,14 +61,25 @@ public class SettingsActivity extends Activity {
     private boolean mEnabled = true;
 
     private ScrollView mScrollView;
+    private LinearLayout mContent;
     private LinearLayout mItemContainer;
     private Switch mMasterSwitch;
     private Button mSaveButton;
+
+    /** The row currently under the finger, or {@code null} when nothing is being dragged. */
     private ViewGroup mDraggingRow;
-    /** Where inside the grabbed row the finger landed, in pixels from its top. */
-    private float mDragGrabOffset;
+    /** Finger position when the gesture started, in screen pixels. */
+    private float mDragStartRawY;
+    /** Slot the dragged row will land in. Only committed to the model when the finger is lifted. */
+    private int mDragTargetIndex = -1;
+    /** How far the dragged row may travel before it would leave the list, in pixels. */
+    private float mDragMinTranslation;
+    private float mDragMaxTranslation;
+
     private int mRowHeightPx;
     private int mDividerHeightPx;
+    /** Whether the system bar insets actually reached {@link #applySystemBarInsets()}. */
+    private boolean mInsetsApplied;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -73,7 +90,7 @@ public class SettingsActivity extends Activity {
         if (actionBar != null) {
             actionBar.hide();
         }
-        mRowHeightPx = dp(64);
+        mRowHeightPx = dp(56);
         mDividerHeightPx = Math.max(1, Math.round(getResources().getDisplayMetrics().density));
         loadState();
         setContentView(buildContentView());
@@ -165,22 +182,15 @@ public class SettingsActivity extends Activity {
         mScrollView.setClipChildren(false);
         mScrollView.setClipToPadding(false);
 
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setClipChildren(false);
-        content.setClipToPadding(false);
-        content.setPadding(dp(20), dp(20), dp(20), dp(32));
-        mScrollView.addView(content, new ViewGroup.LayoutParams(
+        mContent = new LinearLayout(this);
+        mContent.setOrientation(LinearLayout.VERTICAL);
+        mContent.setClipChildren(false);
+        mContent.setClipToPadding(false);
+        mContent.setPadding(dp(20), dp(20), dp(20), dp(32));
+        mScrollView.addView(mContent, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView subtitle = new TextView(this);
-        subtitle.setText(R.string.settings_subtitle);
-        subtitle.setTextSize(14);
-        subtitle.setTextColor(themeColorList(android.R.attr.textColorSecondary));
-        content.addView(subtitle, margins(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(4), 0, 0, dp(20)));
-
-        content.addView(buildMasterCard(), margins(ViewGroup.LayoutParams.MATCH_PARENT,
+        mContent.addView(buildMasterCard(), margins(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, dp(24)));
 
         TextView header = new TextView(this);
@@ -190,7 +200,7 @@ public class SettingsActivity extends Activity {
         header.setAllCaps(true);
         header.setTextColor(themeColorList(android.R.attr.colorAccent));
         header.setLetterSpacing(0.06f);
-        content.addView(header, margins(ViewGroup.LayoutParams.MATCH_PARENT,
+        mContent.addView(header, margins(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(4), 0, 0, dp(8)));
 
         mItemContainer = new LinearLayout(this);
@@ -204,15 +214,8 @@ public class SettingsActivity extends Activity {
         itemsCard.setBackground(cardBackground());
         itemsCard.addView(mItemContainer, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        content.addView(itemsCard, margins(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, dp(8)));
-
-        TextView hint = new TextView(this);
-        hint.setText(R.string.settings_hint);
-        hint.setTextSize(12);
-        hint.setTextColor(themeColorList(android.R.attr.textColorSecondary));
-        content.addView(hint, margins(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(4), 0, 0, dp(24)));
+        mContent.addView(itemsCard, margins(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, dp(24)));
 
         mSaveButton = new Button(this);
         mSaveButton.setText(R.string.settings_save);
@@ -220,10 +223,58 @@ public class SettingsActivity extends Activity {
         mSaveButton.setTextSize(16);
         mSaveButton.setOnClickListener(v -> saveAndApply());
         stylePillButton(mSaveButton);
-        content.addView(mSaveButton, margins(ViewGroup.LayoutParams.MATCH_PARENT,
+        mContent.addView(mSaveButton, margins(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, 0));
 
+        applySystemBarInsets();
         return mScrollView;
+    }
+
+    /**
+     * Keeps the content out of the status bar and the navigation bar.
+     *
+     * <p>The module targets SDK 36, so Android forces it edge-to-edge: the window covers the whole
+     * display and the system bars are drawn on top of it. Without this padding the first row of the
+     * list would sit underneath the status bar. Insets arrive with the first traversal, before
+     * anything is drawn, so the layout is already correct on the first frame.
+     */
+    private void applySystemBarInsets() {
+        final int left = mContent.getPaddingLeft();
+        final int top = mContent.getPaddingTop();
+        final int right = mContent.getPaddingRight();
+        final int bottom = mContent.getPaddingBottom();
+        mScrollView.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+            Insets bars = windowInsets.getInsets(
+                    WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+            if (bars.left != 0 || bars.top != 0 || bars.right != 0 || bars.bottom != 0) {
+                mInsetsApplied = true;
+                mContent.setPadding(left + bars.left, top + bars.top, right + bars.right,
+                        bottom + bars.bottom);
+            }
+            return windowInsets;
+        });
+        // Belt and braces: should an OEM build consume the insets inside the decor, they never
+        // reach the listener above. The scroll view sitting at y = 0 means the window really is
+        // edge-to-edge, and in that case the framework's own status bar height is used instead.
+        mScrollView.post(() -> {
+            if (mInsetsApplied) {
+                return;
+            }
+            int[] location = new int[2];
+            mScrollView.getLocationOnScreen(location);
+            if (location[1] > 0) {
+                return;
+            }
+            int statusBar = statusBarHeight();
+            if (statusBar > 0) {
+                mContent.setPadding(left, top + statusBar, right, bottom);
+            }
+        });
+    }
+
+    private int statusBarHeight() {
+        int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        return id > 0 ? getResources().getDimensionPixelSize(id) : 0;
     }
 
     private View buildMasterCard() {
@@ -271,7 +322,7 @@ public class SettingsActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(6), dp(6), dp(16), dp(6));
+        row.setPadding(dp(6), 0, dp(16), 0);
 
         ImageView handle = new ImageView(this);
         handle.setImageResource(R.drawable.ic_drag_handle);
@@ -288,24 +339,13 @@ public class SettingsActivity extends Activity {
         }
         row.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
 
-        LinearLayout texts = new LinearLayout(this);
-        texts.setOrientation(LinearLayout.VERTICAL);
-        texts.setPadding(dp(14), 0, dp(8), 0);
-
         TextView label = new TextView(this);
         label.setText(PowerMenuItems.label(this, key));
         label.setTextSize(16);
+        label.setSingleLine(true);
+        label.setPadding(dp(14), 0, dp(8), 0);
         label.setTextColor(themeColorList(android.R.attr.textColorPrimary));
-        texts.addView(label);
-
-        TextView description = new TextView(this);
-        description.setText(PowerMenuItems.description(this, key));
-        description.setTextSize(12);
-        description.setSingleLine(true);
-        description.setTextColor(themeColorList(android.R.attr.textColorSecondary));
-        texts.addView(description);
-
-        row.addView(texts, new LinearLayout.LayoutParams(
+        row.addView(label, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         boolean locked = PowerMenuItems.ALWAYS_ON.contains(key);
@@ -356,23 +396,17 @@ public class SettingsActivity extends Activity {
     // ---------------------------------------------------------------- drag to reorder
 
     /**
-     * Continuous (floating) drag.
-     *
-     * <p>Every row is exactly {@link #mRowHeightPx} tall and the container has no padding, so slot
-     * {@code i} always starts at {@code i * rowHeight}. That makes the whole gesture exact
-     * arithmetic: the dragged row's {@code translationY} is recomputed from the finger position on
-     * every move, which is what keeps it glued to the finger, and its slot is derived by rounding
-     * the same value - so it moves any number of slots in one gesture.
+     * Drags from the handle. The row follows the finger for the whole gesture and is only placed
+     * when the finger is lifted, so the position it ends up in is whatever it was covering.
      */
     private void attachDragHandle(View handle, ViewGroup row) {
         handle.setOnTouchListener((view, event) -> {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    startDrag(row, event.getRawY());
-                    return true;
+                    return startDrag(row, event.getRawY());
                 case MotionEvent.ACTION_MOVE:
                     updateDrag(event.getRawY());
-                    return true;
+                    return mDraggingRow != null;
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
                     endDrag();
@@ -383,56 +417,107 @@ public class SettingsActivity extends Activity {
         });
     }
 
-    private void startDrag(ViewGroup row, float rawY) {
-        mDraggingRow = row;
-        // Stop the ScrollView (and everything above it) from stealing the gesture.
-        row.requestDisallowInterceptTouchEvent(true);
-        row.animate().cancel();
-        row.setTranslationY(0f);
-        row.setElevation(dp(6));
-        row.setBackground(floatingRowBackground());
-
+    private boolean startDrag(ViewGroup row, float rawY) {
+        settlePendingDrop();
+        int count = mItemContainer.getChildCount();
         int index = mItemContainer.indexOfChild(row);
-        mDragGrabOffset = rawY - (containerTopOnScreen() + index * (float) mRowHeightPx);
-        if (mDragGrabOffset < 0) {
-            mDragGrabOffset = 0;
+        if (count < 2 || index < 0 || row.getHeight() == 0) {
+            return false;
         }
-        if (mDragGrabOffset > mRowHeightPx) {
-            mDragGrabOffset = mRowHeightPx;
+
+        // Slot geometry comes from the live layout rather than from a constant, so a row that ends
+        // up a pixel taller or shorter than expected can never desynchronise the drag.
+        int listTop = mItemContainer.getChildAt(0).getTop();
+        int listBottom = mItemContainer.getChildAt(count - 1).getBottom();
+        mDragMinTranslation = listTop - row.getTop();
+        mDragMaxTranslation = Math.max(mDragMinTranslation,
+                listBottom - row.getHeight() - row.getTop());
+
+        mDraggingRow = row;
+        mDragStartRawY = rawY;
+        mDragTargetIndex = index;
+        row.requestDisallowInterceptTouchEvent(true);
+        row.setTranslationY(0f);
+        row.setElevation(dp(8));
+        row.setBackground(floatingRowBackground());
+        // The lifted row is a floating card of its own; its separator would ride along with it.
+        if (row.getChildCount() > 1) {
+            row.getChildAt(1).setVisibility(View.GONE);
         }
+        return true;
     }
 
     private void updateDrag(float rawY) {
-        View dragging = mDraggingRow;
+        ViewGroup dragging = mDraggingRow;
         if (dragging == null) {
             return;
         }
-        int count = mItemContainer.getChildCount();
-        if (count == 0) {
-            return;
+        float translation = rawY - mDragStartRawY;
+        if (translation < mDragMinTranslation) {
+            translation = mDragMinTranslation;
+        } else if (translation > mDragMaxTranslation) {
+            translation = mDragMaxTranslation;
         }
-        float desiredTop = rawY - containerTopOnScreen() - mDragGrabOffset;
+        dragging.setTranslationY(translation);
 
-        int current = mItemContainer.indexOfChild(dragging);
-        int target = Math.round(desiredTop / mRowHeightPx);
-        if (target < 0) {
-            target = 0;
+        // Nearest slot centre wins. Every row is compared at its laid-out position, which is still
+        // the original one because nothing has been reordered yet.
+        float center = dragging.getTop() + translation + dragging.getHeight() / 2f;
+        int count = mItemContainer.getChildCount();
+        int best = mDragTargetIndex;
+        float bestDistance = Float.MAX_VALUE;
+        for (int i = 0; i < count; i++) {
+            View child = mItemContainer.getChildAt(i);
+            float distance = Math.abs(child.getTop() + child.getHeight() / 2f - center);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = i;
+            }
         }
-        if (target > count - 1) {
-            target = count - 1;
-        }
-        if (target != current) {
-            moveRow(current, target);
-            current = target;
-        }
-        // Recompute from the finger every time: after a reorder the row's layout position changed,
-        // and this keeps it visually under the finger.
-        dragging.setTranslationY(desiredTop - current * (float) mRowHeightPx);
+        mDragTargetIndex = Math.max(0, Math.min(count - 1, best));
     }
 
-    /** Moves the model entry and the view, and lets the rows in between slide to their new slot. */
-    private void moveRow(int from, int to) {
-        View dragging = mDraggingRow;
+    private void endDrag() {
+        final ViewGroup dragging = mDraggingRow;
+        mDraggingRow = null;
+        if (dragging == null) {
+            return;
+        }
+        dragging.requestDisallowInterceptTouchEvent(false);
+
+        final int from = mItemContainer.indexOfChild(dragging);
+        int to = mDragTargetIndex;
+        if (from < 0) {
+            dragging.setTranslationY(0f);
+            dragging.setBackground(null);
+            dragging.setElevation(0f);
+            return;
+        }
+        to = Math.max(0, Math.min(mItemContainer.getChildCount() - 1, to));
+        final int target = to;
+        // Where the row has to travel to sit exactly on the slot it was dropped on.
+        float destination = target == from
+                ? 0f
+                : mItemContainer.getChildAt(target).getTop() - dragging.getTop();
+
+        dragging.animate()
+                .translationY(destination)
+                .setDuration(DROP_ANIM_MS)
+                .withEndAction(() -> placeRow(dragging, from, target))
+                .start();
+    }
+
+    /** Runs when the drop animation ends (or is cancelled), at most once per gesture. */
+    private void placeRow(ViewGroup dragging, int from, int to) {
+        dragging.setTranslationY(0f);
+        dragging.setBackground(null);
+        dragging.setElevation(0f);
+        // Brings back the separator that was hidden when the row was picked up.
+        updateDividers();
+        if (from == to || mItemContainer.indexOfChild(dragging) != from) {
+            return;
+        }
+
         int count = mItemContainer.getChildCount();
         View[] before = new View[count];
         for (int i = 0; i < count; i++) {
@@ -444,6 +529,8 @@ public class SettingsActivity extends Activity {
         mItemContainer.addView(dragging, to);
         updateDividers();
 
+        // Rows that lost or gained a slot glide from where they were drawn to where they now are,
+        // instead of jumping a whole row height.
         for (int oldIndex = 0; oldIndex < count; oldIndex++) {
             View child = before[oldIndex];
             if (child == dragging) {
@@ -453,34 +540,27 @@ public class SettingsActivity extends Activity {
             if (newIndex == oldIndex) {
                 continue;
             }
-            // Start where it used to be and slide into place.
             child.animate().cancel();
-            child.setTranslationY((oldIndex - newIndex) * (float) mRowHeightPx);
+            child.setTranslationY((oldIndex - newIndex) * (float) child.getHeight());
             child.animate().translationY(0f).setDuration(REORDER_ANIM_MS).start();
         }
     }
 
-    private void endDrag() {
-        final ViewGroup dragging = mDraggingRow;
-        mDraggingRow = null;
-        if (dragging == null) {
-            return;
+    /**
+     * A gesture can start while the previous row is still gliding into place. Cancelling the
+     * animation runs its end action, which commits that pending reorder, so the indices read
+     * afterwards are always the settled ones.
+     */
+    private void settlePendingDrop() {
+        int count = mItemContainer.getChildCount();
+        View[] children = new View[count];
+        for (int i = 0; i < count; i++) {
+            children[i] = mItemContainer.getChildAt(i);
         }
-        dragging.requestDisallowInterceptTouchEvent(false);
-        dragging.animate()
-                .translationY(0f)
-                .setDuration(DROP_ANIM_MS)
-                .withEndAction(() -> {
-                    dragging.setBackground(null);
-                    dragging.setElevation(0f);
-                })
-                .start();
-    }
-
-    private float containerTopOnScreen() {
-        int[] location = new int[2];
-        mItemContainer.getLocationOnScreen(location);
-        return location[1];
+        for (View child : children) {
+            child.animate().cancel();
+            child.setTranslationY(0f);
+        }
     }
 
     // ---------------------------------------------------------------- theming helpers

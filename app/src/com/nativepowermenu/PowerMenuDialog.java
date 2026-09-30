@@ -10,6 +10,7 @@ import android.content.IntentFilter;
 import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -23,6 +24,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -137,7 +139,52 @@ final class PowerMenuDialog {
         registerReceiver();
         dialog.show();
         mDialog = dialog;
+        applySafeArea(content, dialog);
         mActions.onShownCompat();
+    }
+
+    /**
+     * Keeps the grid out of the status bar and the navigation bar.
+     *
+     * <p>The dialog window is full screen (that is what makes the dim cover everything and the
+     * AOSP layout centre itself), and {@code TYPE_STATUS_BAR_SUB_PANEL} is drawn *above* the status
+     * bar, so nothing insets the content automatically. With a long menu the top row would end up
+     * underneath the clock; padding the root makes the grid centre inside the safe area instead.
+     */
+    private void applySafeArea(View root, Dialog dialog) {
+        final int left = root.getPaddingLeft();
+        final int top = root.getPaddingTop();
+        final int right = root.getPaddingRight();
+        final int bottom = root.getPaddingBottom();
+
+        Window window = dialog.getWindow();
+        View decor = window != null ? window.getDecorView() : null;
+        WindowInsets insets = decor != null ? decor.getRootWindowInsets() : null;
+        if (insets != null) {
+            padToInsets(root, insets, left, top, right, bottom);
+        } else {
+            // Not attached yet (rare): fall back to the framework's own status bar height so even
+            // the first frame stays clear of it.
+            int statusBar = ResourceLookup.dimen(mContext.getResources(), ResourceLookup.PKG_ANDROID,
+                    "status_bar_height", 0);
+            root.setPadding(left, top + statusBar, right, bottom);
+        }
+        root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+            padToInsets(view, windowInsets, left, top, right, bottom);
+            return windowInsets;
+        });
+    }
+
+    /** Idempotent: the padding always comes from the root's own, captured up front. */
+    private void padToInsets(View root, WindowInsets windowInsets,
+            int left, int top, int right, int bottom) {
+        Insets bars = windowInsets.getInsets(
+                WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+        if (bars.left == 0 && bars.top == 0 && bars.right == 0 && bars.bottom == 0) {
+            // Consumed by an ancestor; leave whatever we already applied in place.
+            return;
+        }
+        root.setPadding(left + bars.left, top + bars.top, right + bars.right, bottom + bars.bottom);
     }
 
     private Context themedContext() {
