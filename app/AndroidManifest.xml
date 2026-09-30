@@ -1,12 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.nativepowermenu"
-    android:versionCode="1"
-    android:versionName="1.0.0">
+    android:versionCode="2"
+    android:versionName="2.0.0">
 
     <uses-sdk
         android:minSdkVersion="31"
         android:targetSdkVersion="36" />
+
+    <!--
+      Held only by the module itself (signature level). SystemUI registers the settings receiver
+      with this as its broadcast permission, so no other app can restart SystemUI.
+    -->
+    <permission
+        android:name="com.nativepowermenu.permission.APPLY"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.nativepowermenu.permission.APPLY" />
 
     <application
         android:allowBackup="false"
@@ -14,6 +23,17 @@
         android:hasCode="true"
         android:label="@string/app_name"
         android:supportsRtl="true">
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@android:style/Theme.DeviceDefault.DayNight">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
         <!-- Xposed / LSPosed module metadata -->
         <meta-data

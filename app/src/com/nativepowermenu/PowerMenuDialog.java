@@ -291,14 +291,7 @@ final class PowerMenuDialog {
             message.setSelected(true);
         }
         if (icon != null) {
-            Drawable drawable = item.iconDrawable;
-            if (drawable == null && item.iconResId != 0) {
-                try {
-                    drawable = context.getDrawable(item.iconResId);
-                } catch (Throwable t) {
-                    ModuleLog.w("could not load the icon for " + item.key, t);
-                }
-            }
+            Drawable drawable = item.icon;
             if (drawable != null) {
                 drawable = drawable.mutate();
                 icon.setImageDrawable(drawable);
@@ -418,10 +411,7 @@ final class PowerMenuDialog {
 
             ImageView icon = new ImageView(context);
             icon.setLayoutParams(new LinearLayout.LayoutParams(iconSize, iconSize));
-            Drawable drawable = item.iconDrawable;
-            if (drawable == null && item.iconResId != 0) {
-                drawable = context.getDrawable(item.iconResId);
-            }
+            Drawable drawable = item.icon;
             if (drawable != null) {
                 drawable = drawable.mutate();
                 drawable.setTint(textColor);

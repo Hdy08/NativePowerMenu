@@ -11,20 +11,11 @@ import android.graphics.drawable.Drawable;
  */
 final class PowerMenuItem {
 
-    /** Key used by AOSP's {@code config_globalActionsList}, e.g. {@code power}. */
+    /** Key from {@link PowerMenuItems}, e.g. {@code power}. */
     final String key;
 
-    /**
-     * Drawable resource id. Framework drawables use the {@code android} package ids, extended
-     * entries use the module's own ids resolved through {@link ModuleResources}.
-     */
-    final int iconResId;
-
-    /**
-     * Non-null when the icon must come from the module APK instead of {@code iconResId};
-     * {@link ModuleResources} only works with a live host context, so it is resolved lazily.
-     */
-    final Drawable iconDrawable;
+    /** Already resolved: framework drawables and the module's own icons both land here. */
+    final Drawable icon;
 
     final CharSequence label;
     /** Emergency entries are drawn with the red emergency accent, exactly like AOSP. */
@@ -38,12 +29,11 @@ final class PowerMenuItem {
     /** May be {@code null}; mirrors AOSP's {@code LongPressAction}. */
     final Runnable onLongPress;
 
-    PowerMenuItem(String key, int iconResId, Drawable iconDrawable, CharSequence label,
-            boolean emergency, CharSequence confirmTitle, CharSequence confirmMessage,
+    PowerMenuItem(String key, Drawable icon, CharSequence label, boolean emergency,
+            CharSequence confirmTitle, CharSequence confirmMessage,
             Runnable onPress, Runnable onLongPress) {
         this.key = key;
-        this.iconResId = iconResId;
-        this.iconDrawable = iconDrawable;
+        this.icon = icon;
         this.label = label;
         this.emergency = emergency;
         this.confirmTitle = confirmTitle;

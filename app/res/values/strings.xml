@@ -3,6 +3,26 @@
     <string name="app_name">原生电源菜单</string>
     <string name="module_description">把 ColorOS / Oplus 的电源菜单替换回原生 Android (AOSP) 样式，并可扩展引导模式 / 恢复模式，仅对 SystemUI 生效。</string>
 
+    <!-- Settings screen -->
+    <string name="settings_subtitle">长按电源键弹出的菜单</string>
+    <string name="settings_enable">启用模块</string>
+    <string name="settings_enable_desc">关闭后立即恢复 ColorOS 原有关机界面</string>
+    <string name="settings_items_header">菜单项</string>
+    <string name="settings_hint">拖动左侧手柄排序；关机与重启为必选项，不可关闭。</string>
+    <string name="settings_save">保存并应用</string>
+    <string name="settings_applying">正在应用…</string>
+    <string name="settings_applied">已保存，系统界面正在重启，稍后长按电源键查看效果</string>
+    <string name="settings_not_applied">已保存，但没能联系到系统界面：请确认模块已启用，再重启系统界面或手机</string>
+
+    <!-- Menu item descriptions (settings list) -->
+    <string name="item_power_desc">关机（长按进入安全模式）</string>
+    <string name="item_restart_desc">重新启动设备</string>
+    <string name="item_screenshot_desc">截取当前屏幕</string>
+    <string name="item_emergency_desc">打开紧急呼叫</string>
+    <string name="item_lockdown_desc">锁定设备并停用生物识别</string>
+    <string name="item_bootloader_desc">重启到引导模式（Fastboot）</string>
+    <string name="item_recovery_desc">重启到恢复模式（Recovery）</string>
+
     <!-- Extended power menu entries -->
     <string name="reboot_bootloader_title">引导模式</string>
     <string name="reboot_bootloader_confirm">确定要重启到引导模式（Bootloader）吗？\n重启后需要用音量键操作，长按电源键可退出。</string>

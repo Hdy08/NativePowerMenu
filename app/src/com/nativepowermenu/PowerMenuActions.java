@@ -10,14 +10,13 @@ import android.widget.Toast;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.function.Consumer;
 
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * Builds the AOSP power-menu entry list and executes the selected action.
+ * Builds the power-menu entry list from {@link PowerMenuConfig} and executes the selected action.
  *
  * <p>Every action is routed through the same facilities AOSP's own {@code GlobalActionsDialogLite}
  * uses, so the semantics are identical:
@@ -33,20 +32,6 @@ import de.robv.android.xposed.XposedHelpers;
  * </ul>
  */
 final class PowerMenuActions {
-
-    /** AOSP default when {@code config_globalActionsList} is missing or unusable. */
-    private static final String[] AOSP_DEFAULT_KEYS = {
-            "emergency", "lockdown", "power", "restart", "screenshot",
-    };
-
-    private static final List<String> SUPPORTED_KEYS = Arrays.asList(
-            "emergency", "lockdown", "power", "restart", "screenshot");
-
-    private static final String KEY_EMERGENCY = "emergency";
-    private static final String KEY_LOCKDOWN = "lockdown";
-    private static final String KEY_POWER = "power";
-    private static final String KEY_RESTART = "restart";
-    private static final String KEY_SCREENSHOT = "screenshot";
 
     /** {@code LockPatternUtils.STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN}. */
     private static final int STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN = 32;
@@ -94,178 +79,69 @@ final class PowerMenuActions {
     // ---------------------------------------------------------------- item list
 
     List<PowerMenuItem> createItems(boolean keyguardShowing, boolean deviceProvisioned) {
-        List<PowerMenuItem> items = new ArrayList<>();
+        PowerMenuConfig config = PowerMenuConfig.get(mContext);
         boolean telephony = mContext.getPackageManager()
                 .hasSystemFeature(PackageManager.FEATURE_TELEPHONY);
         boolean secure = isKeyguardSecure();
-        boolean provisioned = deviceProvisioned;
-        boolean extendedAdded = false;
 
-        for (String key : resolveKeys()) {
+        List<PowerMenuItem> items = new ArrayList<>();
+        for (String key : config.order) {
+            if (!config.isEnabled(key)) {
+                continue;
+            }
             switch (key) {
-                case KEY_POWER:
-                    // AOSP: showBeforeProvisioning() == true
-                    items.add(powerItem());
+                case PowerMenuItems.POWER:
+                    items.add(new PowerMenuItem(key, PowerMenuItems.icon(mContext, key),
+                            PowerMenuItems.label(mContext, key), false, null, null,
+                            () -> invokeManager("shutdown"),
+                            () -> invokeManager("reboot", Boolean.TRUE)));
                     break;
-                case KEY_RESTART:
-                    items.add(restartItem());
-                    // Keep the two extended entries next to Restart; with two columns in the grid
-                    // that puts them side by side instead of splitting them across rows.
-                    addExtendedItems(items);
-                    extendedAdded = true;
+                case PowerMenuItems.RESTART:
+                    items.add(simple(key, () -> invokeManager("reboot", Boolean.FALSE)));
                     break;
-                case KEY_EMERGENCY:
+                case PowerMenuItems.EMERGENCY:
                     if (telephony) {
-                        items.add(emergencyItem());
+                        items.add(simple(key, this::startEmergencyDialer));
                     }
                     break;
-                case KEY_LOCKDOWN:
-                    // AOSP: showBeforeProvisioning() == false
-                    if (provisioned && secure && isLockdownAllowed()) {
-                        items.add(lockdownItem());
+                case PowerMenuItems.LOCKDOWN:
+                    // AOSP hides Lockdown unless the device has a secure lock screen.
+                    if (deviceProvisioned && secure && isLockdownAllowed()) {
+                        items.add(simple(key, this::lockDown));
                     }
                     break;
-                case KEY_SCREENSHOT:
-                    // AOSP: showBeforeProvisioning() == false
-                    if (provisioned) {
-                        items.add(screenshotItem());
+                case PowerMenuItems.SCREENSHOT:
+                    // AOSP: ScreenshotAction.showBeforeProvisioning() == false
+                    if (deviceProvisioned) {
+                        items.add(simple(key, this::takeScreenshot));
                     }
+                    break;
+                case PowerMenuItems.BOOTLOADER:
+                    items.add(confirmed(key, () -> rebootTo(RebootBridge.REASON_BOOTLOADER)));
+                    break;
+                case PowerMenuItems.RECOVERY:
+                    items.add(confirmed(key, () -> rebootTo(RebootBridge.REASON_RECOVERY)));
                     break;
                 default:
-                    // Unsupported vendor key: ignore it rather than showing a dead button.
+                    // Unknown key: skip rather than showing a dead button.
                     break;
             }
-        }
-
-        // The extended entries are the point of this module, so they are not subject to the device's
-        // own config_globalActionsList.
-        if (!extendedAdded) {
-            addExtendedItems(items);
         }
         return items;
     }
 
-    private void addExtendedItems(List<PowerMenuItem> items) {
-        items.add(bootloaderItem());
-        items.add(recoveryItem());
+    private PowerMenuItem simple(String key, Runnable onPress) {
+        return new PowerMenuItem(key, PowerMenuItems.icon(mContext, key),
+                PowerMenuItems.label(mContext, key),
+                PowerMenuItems.EMERGENCY.equals(key),
+                null, null, onPress, null);
     }
 
-    /**
-     * Reads {@code config_globalActionsList} from {@code framework-res}. ColorOS ships its own copy
-     * of that array, so honouring it keeps the entry set consistent with what the platform thinks
-     * is available. If it does not describe a usable AOSP-style menu we fall back to the AOSP
-     * default order.
-     */
-    private String[] resolveKeys() {
-        String[] raw = ResourceLookup.stringArray(
-                mSysUiRes, ResourceLookup.PKG_ANDROID, "config_globalActionsList");
-        if (raw == null) {
-            ModuleLog.d("config_globalActionsList not found, using AOSP defaults");
-            return AOSP_DEFAULT_KEYS;
-        }
-        List<String> filtered = new ArrayList<>();
-        for (String key : raw) {
-            if (key != null && SUPPORTED_KEYS.contains(key) && !filtered.contains(key)) {
-                filtered.add(key);
-            }
-        }
-        ModuleLog.d("config_globalActionsList=" + Arrays.toString(raw)
-                + " -> using " + filtered);
-        if (filtered.size() < 2) {
-            return AOSP_DEFAULT_KEYS;
-        }
-        return filtered.toArray(new String[0]);
-    }
-
-    // ---------------------------------------------------------------- items
-
-    private PowerMenuItem powerItem() {
-        return new PowerMenuItem(
-                KEY_POWER,
-                ResourceLookup.drawableId(mSysUiRes, ResourceLookup.PKG_ANDROID, "ic_lock_power_off"),
-                null,
-                ResourceLookup.string(mSysUiRes, ResourceLookup.PKG_ANDROID,
-                        "global_action_power_off", "Power off"),
-                false, null, null,
-                () -> invokeManager("shutdown"),
-                () -> invokeManager("reboot", Boolean.TRUE));
-    }
-
-    private PowerMenuItem restartItem() {
-        return new PowerMenuItem(
-                KEY_RESTART,
-                ResourceLookup.drawableId(mSysUiRes, ResourceLookup.PKG_ANDROID, "ic_restart"),
-                null,
-                ResourceLookup.string(mSysUiRes, ResourceLookup.PKG_ANDROID,
-                        "global_action_restart", "Restart"),
-                false, null, null,
-                () -> invokeManager("reboot", Boolean.FALSE),
-                null);
-    }
-
-    private PowerMenuItem screenshotItem() {
-        return new PowerMenuItem(
-                KEY_SCREENSHOT,
-                ResourceLookup.drawableId(mSysUiRes, ResourceLookup.PKG_ANDROID, "ic_screenshot"),
-                null,
-                ResourceLookup.string(mSysUiRes, ResourceLookup.PKG_ANDROID,
-                        "global_action_screenshot", "Screenshot"),
-                false, null, null,
-                this::takeScreenshot,
-                null);
-    }
-
-    private PowerMenuItem emergencyItem() {
-        return new PowerMenuItem(
-                KEY_EMERGENCY,
-                ResourceLookup.drawableId(mSysUiRes, ResourceLookup.PKG_ANDROID, "emergency_icon"),
-                null,
-                ResourceLookup.string(mSysUiRes, ResourceLookup.PKG_ANDROID,
-                        "global_action_emergency", "Emergency"),
-                true, null, null,
-                this::startEmergencyDialer,
-                null);
-    }
-
-    private PowerMenuItem lockdownItem() {
-        return new PowerMenuItem(
-                KEY_LOCKDOWN,
-                ResourceLookup.drawableId(
-                        mSysUiRes, ResourceLookup.PKG_ANDROID, "ic_lock_lockdown"),
-                null,
-                ResourceLookup.string(mSysUiRes, ResourceLookup.PKG_ANDROID,
-                        "global_action_lockdown", "Lockdown"),
-                false, null, null,
-                this::lockDown,
-                null);
-    }
-
-    private PowerMenuItem bootloaderItem() {
-        return new PowerMenuItem(
-                "bootloader",
-                0,
-                ModuleResources.drawable(mContext, R.drawable.ic_bootloader),
-                ModuleResources.string(mContext, R.string.reboot_bootloader_title, "Bootloader"),
-                false,
-                ModuleResources.string(mContext, R.string.reboot_bootloader_title, "Bootloader"),
-                ModuleResources.string(mContext, R.string.reboot_bootloader_confirm,
-                        "Reboot to bootloader?"),
-                () -> rebootTo(RebootBridge.REASON_BOOTLOADER),
-                null);
-    }
-
-    private PowerMenuItem recoveryItem() {
-        return new PowerMenuItem(
-                "recovery",
-                0,
-                ModuleResources.drawable(mContext, R.drawable.ic_recovery),
-                ModuleResources.string(mContext, R.string.reboot_recovery_title, "Recovery"),
-                false,
-                ModuleResources.string(mContext, R.string.reboot_recovery_title, "Recovery"),
-                ModuleResources.string(mContext, R.string.reboot_recovery_confirm,
-                        "Reboot to recovery?"),
-                () -> rebootTo(RebootBridge.REASON_RECOVERY),
-                null);
+    /** Extended entry: the label doubles as the confirmation title, plus an explanatory message. */
+    private PowerMenuItem confirmed(String key, Runnable onPress) {
+        CharSequence label = PowerMenuItems.label(mContext, key);
+        return new PowerMenuItem(key, PowerMenuItems.icon(mContext, key), label, false,
+                label, PowerMenuItems.confirmationMessage(mContext, key), onPress, null);
     }
 
     // ---------------------------------------------------------------- actions
@@ -293,8 +169,8 @@ final class PowerMenuActions {
             ModuleLog.d("asked the system process to reboot to " + reason);
             return;
         }
-        ModuleLog.e("could not request a reboot to " + reason + " (is the module scoped to "
-                + "\"System Framework\" too?)", null);
+        ModuleLog.e("could not request a reboot to " + reason
+                + " (is the module scoped to the system framework too?)", null);
         try {
             Toast.makeText(mContext,
                     ModuleResources.string(mContext, R.string.reboot_unavailable,

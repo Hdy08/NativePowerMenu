@@ -1,0 +1,161 @@
+package com.nativepowermenu;
+
+import android.content.Context;
+import android.content.res.Resources;
+import android.graphics.drawable.Drawable;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * Everything that is shared between the settings app and the SystemUI process.
+ *
+ * <p>Single source of truth for the item keys, their canonical order, their labels, their icons and
+ * - importantly - which of them may never be turned off.
+ */
+final class PowerMenuItems {
+
+    static final String POWER = "power";
+    static final String RESTART = "restart";
+    static final String SCREENSHOT = "screenshot";
+    static final String EMERGENCY = "emergency";
+    static final String LOCKDOWN = "lockdown";
+    static final String BOOTLOADER = "bootloader";
+    static final String RECOVERY = "recovery";
+
+    /** Everything this module knows how to render. */
+    static final List<String> SUPPORTED = Collections.unmodifiableList(Arrays.asList(
+            EMERGENCY, LOCKDOWN, POWER, RESTART, SCREENSHOT, BOOTLOADER, RECOVERY));
+
+    /** Order used when {@code config_globalActionsList} cannot be read. */
+    static final List<String> DEFAULT_ORDER = Collections.unmodifiableList(Arrays.asList(
+            EMERGENCY, LOCKDOWN, POWER, RESTART, SCREENSHOT));
+
+    /**
+     * A power menu without these is a brick: they can be reordered but never disabled.
+     */
+    static final Set<String> ALWAYS_ON = Collections.unmodifiableSet(
+            new HashSet<>(Arrays.asList(POWER, RESTART)));
+
+    private PowerMenuItems() {
+    }
+
+    static boolean isSupported(String key) {
+        return key != null && SUPPORTED.contains(key);
+    }
+
+    // ---------------------------------------------------------------- icons
+
+    /** Framework drawable id, or 0 for the module-local icons and unknown keys. */
+    static int frameworkIconId(Resources res, String key) {
+        switch (key) {
+            case POWER:
+                return ResourceLookup.drawableId(
+                        res, ResourceLookup.PKG_ANDROID, "ic_lock_power_off");
+            case RESTART:
+                return ResourceLookup.drawableId(res, ResourceLookup.PKG_ANDROID, "ic_restart");
+            case SCREENSHOT:
+                return ResourceLookup.drawableId(res, ResourceLookup.PKG_ANDROID, "ic_screenshot");
+            case EMERGENCY:
+                return ResourceLookup.drawableId(res, ResourceLookup.PKG_ANDROID, "emergency_icon");
+            case LOCKDOWN:
+                return ResourceLookup.drawableId(
+                        res, ResourceLookup.PKG_ANDROID, "ic_lock_lockdown");
+            default:
+                // bootloader / recovery ship with the module.
+                return 0;
+        }
+    }
+
+    static Drawable icon(Context context, String key) {
+        try {
+            switch (key) {
+                case BOOTLOADER:
+                    return context.getDrawable(R.drawable.ic_bootloader);
+                case RECOVERY:
+                    return context.getDrawable(R.drawable.ic_recovery);
+                default:
+                    int id = frameworkIconId(context.getResources(), key);
+                    return id != 0 ? context.getDrawable(id) : null;
+            }
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    // ---------------------------------------------------------------- text
+
+    /** Menu label, from framework-res so it follows the system language. */
+    static CharSequence label(Context context, String key) {
+        Resources res = context.getResources();
+        switch (key) {
+            case POWER:
+                return ResourceLookup.string(res, ResourceLookup.PKG_ANDROID,
+                        "global_action_power_off", "Power off");
+            case RESTART:
+                return ResourceLookup.string(res, ResourceLookup.PKG_ANDROID,
+                        "global_action_restart", "Restart");
+            case SCREENSHOT:
+                return ResourceLookup.string(res, ResourceLookup.PKG_ANDROID,
+                        "global_action_screenshot", "Screenshot");
+            case EMERGENCY:
+                return ResourceLookup.string(res, ResourceLookup.PKG_ANDROID,
+                        "global_action_emergency", "Emergency");
+            case LOCKDOWN:
+                return ResourceLookup.string(res, ResourceLookup.PKG_ANDROID,
+                        "global_action_lockdown", "Lockdown");
+            case BOOTLOADER:
+                return ModuleResources.string(context, R.string.reboot_bootloader_title, "Bootloader");
+            case RECOVERY:
+                return ModuleResources.string(context, R.string.reboot_recovery_title, "Recovery");
+            default:
+                return key;
+        }
+    }
+
+    /** One-line explanation shown under the label in the settings list. */
+    static CharSequence description(Context context, String key) {
+        switch (key) {
+            case POWER:
+                return ModuleResources.string(context, R.string.item_power_desc,
+                        "Shut the device down (long press: safe mode)");
+            case RESTART:
+                return ModuleResources.string(context, R.string.item_restart_desc,
+                        "Reboot the device");
+            case SCREENSHOT:
+                return ModuleResources.string(context, R.string.item_screenshot_desc,
+                        "Capture the screen");
+            case EMERGENCY:
+                return ModuleResources.string(context, R.string.item_emergency_desc,
+                        "Open the emergency dialer");
+            case LOCKDOWN:
+                return ModuleResources.string(context, R.string.item_lockdown_desc,
+                        "Lock down and disable biometrics");
+            case BOOTLOADER:
+                return ModuleResources.string(context, R.string.item_bootloader_desc,
+                        "Reboot into fastboot");
+            case RECOVERY:
+                return ModuleResources.string(context, R.string.item_recovery_desc,
+                        "Reboot into recovery");
+            default:
+                return "";
+        }
+    }
+
+    /** Body of the confirmation dialog a destructive extended entry shows before acting. */
+    static CharSequence confirmationMessage(Context context, String key) {
+        switch (key) {
+            case BOOTLOADER:
+                return ModuleResources.string(context, R.string.reboot_bootloader_confirm,
+                        "Reboot to bootloader?");
+            case RECOVERY:
+                return ModuleResources.string(context, R.string.reboot_recovery_confirm,
+                        "Reboot to recovery?");
+            default:
+                return description(context, key);
+        }
+    }
+}
