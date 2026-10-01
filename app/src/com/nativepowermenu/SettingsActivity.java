@@ -388,9 +388,8 @@ public class SettingsActivity extends Activity {
         title.setTextSize(16);
         title.setSingleLine(true);
         title.setTextColor(themeColorList(android.R.attr.textColorPrimary));
-        // The title takes the slack, which keeps the value and the button pinned to the right.
         header.addView(title, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         mLongPressReset = new ImageButton(this);
         mLongPressReset.setImageResource(R.drawable.ic_restore);
@@ -405,17 +404,23 @@ public class SettingsActivity extends Activity {
         int button = dp(36);
         header.addView(mLongPressReset, new LinearLayout.LayoutParams(button, button));
 
+        // Everything left of the value is fixed, so the button stays glued to the title and the
+        // slack ends up here, between it and the number.
+        header.addView(new View(this), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
         mLongPressInput = new EditText(this);
         mLongPressInput.setTextSize(14);
         mLongPressInput.setTextColor(themeColorList(android.R.attr.colorAccent));
         mLongPressInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         mLongPressInput.setSingleLine(true);
-        mLongPressInput.setGravity(Gravity.END);
+        mLongPressInput.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         mLongPressInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
         mLongPressInput.setBackground(themeBackground(android.R.attr.editTextBackground));
         mLongPressInput.setPadding(dp(4), dp(6), dp(4), dp(6));
-        // Wrapping the text keeps the underline as long as the number, not as long as a fixed box.
-        mLongPressInput.setMinWidth(dp(56));
+        // Wrapping the text keeps the underline as long as the number, not as long as a fixed box:
+        // the minimum only has to be big enough to tap.
+        mLongPressInput.setMinWidth(dp(24));
         // Committed when the field is left or "done" is pressed, so half-typed numbers are not applied.
         mLongPressInput.setOnFocusChangeListener((view, hasFocus) -> {
             if (!hasFocus) {
@@ -435,7 +440,8 @@ public class SettingsActivity extends Activity {
 
         TextView unit = new TextView(this);
         unit.setText(R.string.settings_long_press_unit);
-        unit.setTextSize(12);
+        // Same size as the number, so centring both in the row puts them on one baseline.
+        unit.setTextSize(14);
         unit.setPadding(dp(4), 0, 0, 0);
         unit.setTextColor(themeColorList(android.R.attr.textColorSecondary));
         header.addView(unit, new LinearLayout.LayoutParams(
