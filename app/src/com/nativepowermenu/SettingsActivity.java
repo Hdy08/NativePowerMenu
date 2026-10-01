@@ -73,7 +73,7 @@ public class SettingsActivity extends Activity {
     private static final int HEADER_SLACK_DP = 7;
     private static final int SEEK_SLACK_DP = 10;
     /** The slider is inset a little at both ends, so it reads as a control rather than a rule. */
-    private static final int SEEK_INSET_DP = 10;
+    private static final int SEEK_INSET_DP = 8;
 
     /** How long the rows around the dragged one take to slide out of the way. */
     private static final long GAP_ANIM_MS = 140L;
