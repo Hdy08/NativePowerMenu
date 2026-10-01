@@ -521,12 +521,14 @@ public class SettingsActivity extends Activity {
         return card;
     }
 
+    /** The device's own value: what system_server reported, or ColorOS' hardcoded 2500. */
+    private int deviceDefaultMs() {
+        return mFrameworkDefaultMs > 0 ? mFrameworkDefaultMs : LongPress.DEVICE_DEFAULT_MS;
+    }
+
     /** The number shown in the field: the override, or the device's own value. */
     private int displayedLongPressMs() {
-        if (mLongPressMs > 0) {
-            return mLongPressMs;
-        }
-        return mFrameworkDefaultMs > 0 ? mFrameworkDefaultMs : LongPress.DEVICE_DEFAULT_MS;
+        return mLongPressMs > 0 ? mLongPressMs : deviceDefaultMs();
     }
 
     /**
@@ -572,8 +574,9 @@ public class SettingsActivity extends Activity {
         mLongPressSeek.setProgress(LongPress.msToStep(displayedLongPressMs()));
         mSuppressSeek = false;
         mLongPressInput.setText(String.valueOf(displayedLongPressMs()));
-        // Dimmed while the device's own value is in use, so the state is visible at a glance.
-        boolean overridden = mLongPressMs > 0;
+        // Dimmed while the delay is the device's own - either because nothing is overridden, or
+        // because the number that was entered happens to be exactly the default.
+        boolean overridden = mLongPressMs > 0 && mLongPressMs != deviceDefaultMs();
         mLongPressReset.setEnabled(overridden);
         mLongPressReset.setAlpha(overridden ? 1f : 0.4f);
     }
