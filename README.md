@@ -166,8 +166,11 @@ public long modifyPressTimeout(int pressType, long veryLongPressTimeout, KeyEven
   其它行会实时让位：落点一变，它们就用 140ms 滑到相邻槽位，把那个位置空出来。让位只改绘制偏移
   （`translationY`），**不改顺序**也**不改被拖行的下标**，所以整套坐标计算不会因为重排而失效；
   松手时被拖行用 160ms 滑进空位，顺序才真正提交 —— 此时其它行已经在正确位置上，不需要再动。
-  整条链路的 `clipChildren` 都关掉了，抬起来的行靠 `setElevation` 浮在列表之上（圆角用同一个
-  `CARD_RADIUS_DP`，和它下面的列表框一致）
+  移动的始终是**槽位里的那一行**，槽位本身不动 —— 行在槽位内上/下滑动（槽位关掉
+  `clipChildren` 才不会被裁），因此在它上面、以及被让开的那些槽位上的**分割线全程静止**，
+  既不会被手指拖走也不会跟着滑动。抬起来的行靠 `setElevation` 浮在列表之上（槽位自己也
+  抬一个 elevation 只是为了改变绘制顺序，它没有背景所以不会画阴影），圆角用同一个
+  `CARD_RADIUS_DP`，和它下面的列表框一致
   （`ViewGroup` 会按 Z 重排绘制顺序）。
 - **列表重置**：「电源菜单项」右边的 ⟳ 把顺序恢复成设备 `config_globalActionsList` 的默认
   顺序（扩展项紧跟在「重启」之后），开关恢复成「引导模式 / 恢复模式 关，其余开」——

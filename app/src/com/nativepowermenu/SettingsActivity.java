@@ -105,8 +105,13 @@ public class SettingsActivity extends Activity {
     private ImageButton mItemsReset;
     private Button mSaveButton;
 
-    /** The row currently under the finger, or {@code null} when nothing is being dragged. */
-    private ViewGroup mDraggingRow;
+    /** The row currently under the finger (it is what moves), or {@code null}. */
+    private View mDraggingRow;
+    /**
+     * The slot that row belongs to. It never moves, so the separator drawn in it stays put while
+     * the row slides over its neighbours.
+     */
+    private ViewGroup mDraggingHolder;
     /** Layout index the dragged row started at. It keeps that index for the whole gesture. */
     private int mDragFromIndex = -1;
     /** Finger position when the gesture started, in screen pixels. */
@@ -617,6 +622,9 @@ public class SettingsActivity extends Activity {
 
     private View createItemRow(String key) {
         FrameLayout holder = new FrameLayout(this);
+        // The row slides out of its slot while being dragged, so the slot must not clip it.
+        holder.setClipChildren(false);
+        holder.setClipToPadding(false);
 
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -700,12 +708,16 @@ public class SettingsActivity extends Activity {
      * Drags from the handle. The grabbed row follows the finger for the whole gesture while the
      * other rows slide out of the way to leave a free slot under it; the order itself is only
      * committed when the finger is lifted, so dropping simply drops the row into that free slot.
+     *
+     * <p>What moves is always the row <em>inside</em> its slot, never the slot: the slot keeps the
+     * row's layout position and its separator, so a separator can neither be dragged along by the
+     * finger nor slide away with a row that is making room.
      */
-    private void attachDragHandle(View handle, ViewGroup row) {
+    private void attachDragHandle(View handle, ViewGroup holder) {
         handle.setOnTouchListener((view, event) -> {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    return startDrag(row, event.getRawY());
+                    return startDrag(holder, event.getRawY());
                 case MotionEvent.ACTION_MOVE:
                     updateDrag(event.getRawY());
                     return mDraggingRow != null;
@@ -719,7 +731,7 @@ public class SettingsActivity extends Activity {
         });
     }
 
-    private boolean startDrag(ViewGroup row, float rawY) {
+    private boolean startDrag(ViewGroup holder, float rawY) {
         // A second finger on another handle must not take over: the first gesture owns the drag,
         // and its row would be left floating for good if the reference were overwritten.
         if (mDraggingRow != null) {
@@ -727,40 +739,46 @@ public class SettingsActivity extends Activity {
         }
         settlePendingDrop();
         int count = mItemContainer.getChildCount();
-        int index = mItemContainer.indexOfChild(row);
-        if (count < 2 || index < 0 || row.getHeight() == 0) {
+        int index = mItemContainer.indexOfChild(holder);
+        if (count < 2 || index < 0 || holder.getChildCount() == 0 || holder.getHeight() == 0) {
             return false;
         }
+        View row = holder.getChildAt(0);
 
         // Slot geometry comes from the live layout rather than from a constant, so a row that ends
         // up a pixel taller or shorter than expected can never desynchronise the drag.
         int listTop = mItemContainer.getChildAt(0).getTop();
         int listBottom = mItemContainer.getChildAt(count - 1).getBottom();
-        mDragMinTranslation = listTop - row.getTop();
+        mDragMinTranslation = listTop - holder.getTop();
         mDragMaxTranslation = Math.max(mDragMinTranslation,
-                listBottom - row.getHeight() - row.getTop());
+                listBottom - holder.getHeight() - holder.getTop());
 
+        mDraggingHolder = holder;
         mDraggingRow = row;
         mDragFromIndex = index;
         mDragStartRawY = rawY;
         mDragTargetIndex = index;
-        row.requestDisallowInterceptTouchEvent(true);
+        holder.requestDisallowInterceptTouchEvent(true);
         // A cancelled drop may have left this very row animating; it has to stop now, or the
         // animator would overwrite the translation the finger is about to drive.
         row.animate().cancel();
         row.setTranslationY(0f);
-        row.setElevation(dp(8));
         row.setBackground(floatingRowBackground());
-        // The lifted row is a floating card of its own; its separator would ride along with it.
-        if (row.getChildCount() > 1) {
-            row.getChildAt(1).setVisibility(View.GONE);
+        // The row's own elevation draws its shadow; the slot's only exists to lift the whole slot
+        // above its neighbours (it has no background, so it draws no shadow of its own).
+        row.setElevation(dp(6));
+        holder.setElevation(dp(8));
+        // The lifted row is a floating card of its own; its separator stays in the empty slot.
+        if (holder.getChildCount() > 1) {
+            holder.getChildAt(1).setVisibility(View.GONE);
         }
         return true;
     }
 
     private void updateDrag(float rawY) {
-        ViewGroup dragging = mDraggingRow;
-        if (dragging == null) {
+        View dragging = mDraggingRow;
+        ViewGroup holder = mDraggingHolder;
+        if (dragging == null || holder == null) {
             return;
         }
         float translation = rawY - mDragStartRawY;
@@ -771,9 +789,9 @@ public class SettingsActivity extends Activity {
         }
         dragging.setTranslationY(translation);
 
-        // Nearest slot centre wins. Rows are compared at their laid-out positions, which the gap
-        // underneath them never changes, so the target cannot end up chasing its own animation.
-        float center = dragging.getTop() + translation + dragging.getHeight() / 2f;
+        // Nearest slot centre wins. Slots are compared at their laid-out positions, which neither
+        // the gap nor any animation changes, so the target cannot chase its own movement.
+        float center = holder.getTop() + translation + holder.getHeight() / 2f;
         int count = mItemContainer.getChildCount();
         int best = mDragTargetIndex;
         float bestDistance = Float.MAX_VALUE;
@@ -793,83 +811,76 @@ public class SettingsActivity extends Activity {
     }
 
     /**
-     * Moves every other row so that the slot the dragged row would land in is left empty.
+     * Slides every other row so that the slot the dragged row would land in is left empty.
      *
-     * <p>Nothing is reordered here: the dragged row keeps its index for the whole gesture, and the
-     * rows around it are only <em>drawn</em> shifted by a {@code translationY}. Visual slot
-     * {@code s} is always {@code getChildAt(s).getTop()} because the layout never changes while
-     * dragging, so a row's offset is simply "the top of the slot it should occupy minus its own".
+     * <p>Nothing is reordered here: rows only move inside their own slot, and slot {@code s} is
+     * always {@code getChildAt(s).getTop()} because the layout never changes while dragging - so a
+     * row's offset is simply "the top of the slot it should occupy minus the top of its own".
      */
     private void openGap(int from, int target) {
         int count = mItemContainer.getChildCount();
         for (int i = 0; i < count; i++) {
-            View child = mItemContainer.getChildAt(i);
-            if (child == mDraggingRow) {
+            ViewGroup holder = (ViewGroup) mItemContainer.getChildAt(i);
+            if (holder == mDraggingHolder || holder.getChildCount() == 0) {
                 continue;
             }
             // Where this row sits in the list as it would be without the dragged row...
             int withoutDragging = i < from ? i : i - 1;
             // ...and the slot it has to occupy once the dragged row is put back at `target`.
             int slot = withoutDragging < target ? withoutDragging : withoutDragging + 1;
-            float wanted = mItemContainer.getChildAt(slot).getTop() - child.getTop();
-            if (Math.abs(child.getTranslationY() - wanted) < 0.5f) {
+            float wanted = mItemContainer.getChildAt(slot).getTop() - holder.getTop();
+            View row = holder.getChildAt(0);
+            if (Math.abs(row.getTranslationY() - wanted) < 0.5f) {
                 continue;
             }
-            child.animate().cancel();
-            child.animate().translationY(wanted).setDuration(GAP_ANIM_MS).start();
+            row.animate().cancel();
+            row.animate().translationY(wanted).setDuration(GAP_ANIM_MS).start();
         }
     }
 
     private void endDrag() {
-        final ViewGroup dragging = mDraggingRow;
+        final View dragging = mDraggingRow;
+        final ViewGroup holder = mDraggingHolder;
         mDraggingRow = null;
-        if (dragging == null) {
+        mDraggingHolder = null;
+        if (dragging == null || holder == null) {
             return;
         }
-        dragging.requestDisallowInterceptTouchEvent(false);
+        holder.requestDisallowInterceptTouchEvent(false);
 
-        final int from = mItemContainer.indexOfChild(dragging);
+        final int from = mItemContainer.indexOfChild(holder);
         int to = mDragTargetIndex;
         if (from < 0) {
             dragging.setTranslationY(0f);
             dragging.setBackground(null);
             dragging.setElevation(0f);
+            holder.setElevation(0f);
+            updateDividers();
             return;
         }
         to = Math.max(0, Math.min(mItemContainer.getChildCount() - 1, to));
         final int target = to;
-        // Where the row has to travel to sit exactly on the slot that was left open for it, or
+        // How far the row has to travel to sit exactly on the slot that was left open for it, or
         // straight back into its own slot when it is dropped where it started.
         float destination = target == from
                 ? 0f
-                : mItemContainer.getChildAt(target).getTop() - dragging.getTop();
+                : mItemContainer.getChildAt(target).getTop() - holder.getTop();
 
         dragging.animate()
                 .translationY(destination)
                 .setDuration(DROP_ANIM_MS)
-                .withEndAction(() -> placeRow(dragging, from, target))
+                .withEndAction(() -> placeRow(holder, from, target))
                 .start();
     }
 
     /** Runs when the drop animation ends (or is cancelled), at most once per gesture. */
-    private void placeRow(ViewGroup dragging, int from, int to) {
-        if (from != to && mItemContainer.indexOfChild(dragging) == from) {
+    private void placeRow(ViewGroup holder, int from, int to) {
+        if (from != to && mItemContainer.indexOfChild(holder) == from) {
             mOrder.add(to, mOrder.remove(from));
             mItemContainer.removeViewAt(from);
-            mItemContainer.addView(dragging, to);
+            mItemContainer.addView(holder, to);
         }
-
-        // Every row is now laid out exactly where it was already being drawn - the dragged one in
-        // the slot that was opened for it, the others where they had slid to - so clearing the
-        // offsets in the same pass as the reorder changes nothing on screen.
-        int count = mItemContainer.getChildCount();
-        for (int i = 0; i < count; i++) {
-            View child = mItemContainer.getChildAt(i);
-            child.animate().cancel();
-            child.setTranslationY(0f);
-        }
-        dragging.setBackground(null);
-        dragging.setElevation(0f);
+        clearDragDecorations();
         // Brings back the separator that was hidden when the row was picked up.
         updateDividers();
         updateItemsResetState();
@@ -882,13 +893,39 @@ public class SettingsActivity extends Activity {
      */
     private void settlePendingDrop() {
         int count = mItemContainer.getChildCount();
-        View[] children = new View[count];
+        ViewGroup[] holders = new ViewGroup[count];
         for (int i = 0; i < count; i++) {
-            children[i] = mItemContainer.getChildAt(i);
+            holders[i] = (ViewGroup) mItemContainer.getChildAt(i);
         }
-        for (View child : children) {
-            child.animate().cancel();
-            child.setTranslationY(0f);
+        for (ViewGroup holder : holders) {
+            holder.setElevation(0f);
+            for (int i = 0; i < holder.getChildCount(); i++) {
+                View child = holder.getChildAt(i);
+                child.animate().cancel();
+                child.setTranslationY(0f);
+            }
+            if (holder.getChildCount() > 0) {
+                View row = holder.getChildAt(0);
+                row.setBackground(null);
+                row.setElevation(0f);
+            }
+        }
+    }
+
+    /** Puts every row back on its slot and takes the drag's shadow and background away. */
+    private void clearDragDecorations() {
+        int count = mItemContainer.getChildCount();
+        for (int i = 0; i < count; i++) {
+            ViewGroup holder = (ViewGroup) mItemContainer.getChildAt(i);
+            holder.setElevation(0f);
+            if (holder.getChildCount() == 0) {
+                continue;
+            }
+            View row = holder.getChildAt(0);
+            row.animate().cancel();
+            row.setTranslationY(0f);
+            row.setBackground(null);
+            row.setElevation(0f);
         }
     }
 
