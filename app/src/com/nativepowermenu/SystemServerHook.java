@@ -29,6 +29,10 @@ final class SystemServerHook {
             "com.android.server.policy.PhoneWindowManager$PowerKeyRule";
 
     private static final String METHOD_LONG_PRESS_TIMEOUT = "getLongPressTimeoutMs";
+    private static final String CLASS_PHONE_WINDOW_MANAGER =
+            "com.android.server.policy.PhoneWindowManager";
+    private static final String CLASS_PHONE_WINDOW_MANAGER_EXT =
+            "com.android.server.policy.PhoneWindowManagerExtImpl";
 
     /** Written by the carrier hook, read by the key-rule hook; both live in system_server. */
     private static volatile int sLongPressTimeoutMs;
@@ -41,11 +45,12 @@ final class SystemServerHook {
 
     private final ClassLoader mClassLoader;
 
-    /** How many presses get logged before only changes are. */
-    private static final int HOOK_LOG_LIMIT = 4;
+    /** How many key presses get logged before only value changes are. */
+    private static final int HOOK_LOG_LIMIT = 12;
 
     private boolean mCarrierInstalled;
     private boolean mPowerKeyInstalled;
+    private boolean mTimelineInstalled;
     private int mHookLogs;
     private int mLastApplied = -1;
 
@@ -74,7 +79,58 @@ final class SystemServerHook {
     private synchronized boolean tryInstall() {
         boolean carrier = mCarrierInstalled || installCarrierHook();
         boolean powerKey = mPowerKeyInstalled || installPowerKeyHook();
+        installTimelineHooks();
         return carrier && powerKey;
+    }
+
+    // ---------------------------------------------------------------- power key timeline
+
+    /**
+     * Logs the whole power-key path once, so "the timeout setting does nothing" can be told apart
+     * from "the menu is not shown by this path at all". Each of these only runs on a long press.
+     */
+    private void installTimelineHooks() {
+        if (mTimelineInstalled) {
+            return;
+        }
+        mTimelineInstalled = true;
+        hookOrWarn(CLASS_PHONE_WINDOW_MANAGER, "powerLongPress", "powerLongPress fired", true,
+                new Class<?>[]{long.class});
+        hookOrWarn(CLASS_PHONE_WINDOW_MANAGER, "showGlobalActions", "showGlobalActions()", false,
+                new Class<?>[0]);
+        hookOrWarn(CLASS_POWER_KEY_RULE, "onLongPress", "PowerKeyRule.onLongPress", false,
+                new Class<?>[]{long.class});
+        hookOrWarn(CLASS_PHONE_WINDOW_MANAGER_EXT, "oplusInterceptLongPowerPress",
+                "oplusInterceptLongPowerPress -> ", true, new Class<?>[0]);
+    }
+
+    private void hookOrWarn(String className, String method, final String message,
+            final boolean logResult, Class<?>... signature) {
+        try {
+            Class<?> clazz = XposedHelpers.findClass(className, mClassLoader);
+            XC_MethodHook hook = new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        ModuleLog.d(message
+                                + (logResult ? String.valueOf(param.getResult()) : ""));
+                    } catch (Throwable ignored) {
+                        // Logging must never break the policy path.
+                    }
+                }
+            };
+            XposedHelpers.findAndHookMethod(clazz, method, arguments(signature, hook));
+        } catch (Throwable t) {
+            ModuleLog.w("system_server: could not hook " + className + "#" + method + ": " + t);
+        }
+    }
+
+    /** {@code findAndHookMethod}'s varargs form: the parameter types followed by the callback. */
+    private static Object[] arguments(Class<?>[] signature, XC_MethodHook hook) {
+        Object[] params = new Object[signature.length + 1];
+        System.arraycopy(signature, 0, params, 0, signature.length);
+        params[signature.length] = hook;
+        return params;
     }
 
     // ---------------------------------------------------------------- the request carrier
