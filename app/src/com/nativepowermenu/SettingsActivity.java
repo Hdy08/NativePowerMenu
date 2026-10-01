@@ -277,7 +277,7 @@ public class SettingsActivity extends Activity {
 
         mItemsReset = new ImageButton(this);
         mItemsReset.setImageResource(R.drawable.ic_restore);
-        mItemsReset.setImageTintList(themeColorList(android.R.attr.colorAccent));
+        mItemsReset.setImageTintList(themeColorList(android.R.attr.textColorPrimary));
         mItemsReset.setBackground(themeBackground(
                 android.R.attr.selectableItemBackgroundBorderless));
         mItemsReset.setContentDescription(getString(R.string.settings_items_reset));
@@ -424,7 +424,8 @@ public class SettingsActivity extends Activity {
 
         mLongPressReset = new ImageButton(this);
         mLongPressReset.setImageResource(R.drawable.ic_restore);
-        mLongPressReset.setImageTintList(themeColorList(android.R.attr.colorAccent));
+        // Plain text colour, not the accent: the icons are controls, not highlights.
+        mLongPressReset.setImageTintList(themeColorList(android.R.attr.textColorPrimary));
         mLongPressReset.setBackground(themeBackground(
                 android.R.attr.selectableItemBackgroundBorderless));
         mLongPressReset.setContentDescription(getString(R.string.settings_long_press_reset));
