@@ -36,11 +36,14 @@ final class SystemClient {
         if (barService == null) {
             return false;
         }
-        int answer = send(barService, request);
-        if (answer == SystemBridge.ACK) {
+        int[] answer = send(barService, request);
+        if (answer == null) {
+            return false;
+        }
+        if (answer[0] == SystemBridge.ACK) {
             return true;
         }
-        if (answer == SystemBridge.NAK) {
+        if (answer[0] == SystemBridge.NAK) {
             ModuleLog.e("system_server reached the reboot path but it failed", null);
         }
         return false;
@@ -50,30 +53,41 @@ final class SystemClient {
      * Pushes the power long-press timeout to system_server ({@code 0} restores the framework's own
      * value). Called when SystemUI starts and whenever the settings app applies new values, so the
      * change takes effect without restarting the system process.
+     *
+     * @return the timeout the framework itself uses on this device, as observed by system_server -
+     *     useful because that value is not necessarily what {@code config_longPressOnPowerDurationMs}
+     *     says - or {@code -1} when the system side could not be reached (or has not seen a power
+     *     key press yet).
      */
-    static boolean setLongPressTimeout(int ms) {
+    static int pushLongPressTimeout(int ms) {
         int clamped = LongPress.clamp(ms);
         Object barService = barServiceFromServiceManager();
         if (barService == null) {
-            return false;
+            return -1;
         }
-        int answer = send(barService, SystemBridge.timeoutRequestCode(clamped));
-        if (answer == SystemBridge.ACK) {
+        int[] answer = send(barService, SystemBridge.timeoutRequestCode(clamped));
+        if (answer == null) {
+            return -1;
+        }
+        if (answer[0] == SystemBridge.ACK) {
+            int frameworkDefault = answer.length > 1 ? answer[1] : 0;
             ModuleLog.d("system_server accepted the long-press timeout: "
-                    + (clamped == 0 ? "framework default" : clamped + " ms"));
-            return true;
+                    + (clamped == 0 ? "framework default" : clamped + " ms")
+                    + " (framework's own: "
+                    + (frameworkDefault > 0 ? frameworkDefault + " ms" : "not seen yet") + ")");
+            return frameworkDefault > 0 ? frameworkDefault : -1;
         }
-        if (answer != SystemBridge.NAK) {
+        if (answer[0] != SystemBridge.NAK) {
             ModuleLog.w("no answer for the long-press timeout - the module is probably not scoped to"
                     + " the system framework");
         }
-        return false;
+        return -1;
     }
 
     // ---------------------------------------------------------------- plumbing
 
-    /** Returns {@link SystemBridge#ACK}, {@link SystemBridge#NAK} or {@code 0} for "no answer". */
-    private static int send(Object barService, int request) {
+    /** The system side's reply, or {@code null} when the call could not be made or made sense of. */
+    private static int[] send(Object barService, int request) {
         Method carrier;
         try {
             carrier = XposedHelpers.findMethodExact(barService.getClass(),
@@ -81,13 +95,13 @@ final class SystemClient {
         } catch (Throwable t) {
             ModuleLog.w("IStatusBarService has no " + SystemBridge.methodName()
                     + " method to carry the request", t);
-            return 0;
+            return null;
         }
         try {
             Object result = carrier.invoke(barService, (IBinder) null, request);
             if (result instanceof int[] && ((int[]) result).length > 0) {
-                int answer = ((int[]) result)[0];
-                if (answer != SystemBridge.ACK && answer != SystemBridge.NAK) {
+                int[] answer = (int[]) result;
+                if (answer[0] != SystemBridge.ACK && answer[0] != SystemBridge.NAK) {
                     ModuleLog.w("no answer from system_server (got " + describe(result)
                             + ") - the module is probably not scoped to the system framework");
                 }
@@ -97,7 +111,7 @@ final class SystemClient {
         } catch (Throwable t) {
             ModuleLog.e("could not send the request", t);
         }
-        return 0;
+        return null;
     }
 
     private static Object barService(Object globalActionsManager) {

@@ -76,17 +76,30 @@
 
 系统里「按住电源键多久弹出电源菜单」由 `PhoneWindowManager` 的一条按键规则决定：
 `SingleKeyGestureDetector` 用它给出的超时来判定长按，超时后调用 `powerLongPress()` →
-`showGlobalActions()`（也就是本模块替换掉的那个入口）。设备上的默认值来自
-`config_longPressOnPowerDurationMs`（**500 ms**）。
+`showGlobalActions()`（也就是本模块替换掉的那个入口）。ColorOS 这一层也确认过：
+`powerLongPress()` 会先问 Oplus 的 `oplusInterceptLongPowerPress()`，它只在**屏幕已熄灭**时截胡
+（返回 true），亮屏时只做一次振动就放行 —— 所以亮屏下的菜单确实走 AOSP 那条路。
 
 模块挂的是 `com.android.server.policy.PhoneWindowManager$PowerKeyRule#getLongPressTimeoutMs`：
 配置了值就在返回值里替换掉它（电源键被设成「长按唤起助理」时不干预，那条走的是另一个更短的
 超时）。这个钩子只影响电源键，不会动到 `SingleKeyGestureDetector` 里那份静态默认值 —— 那份是
 所有按键规则共用的。
 
+> **默认值不能只看 `config_longPressOnPowerDurationMs`。** framework-res 里写的是 500 ms，但实测
+> 按住电源键要两秒多菜单才出来，说明真正生效的值另有来源（`Settings.Global` 的
+> `power_button_long_press` / `power_button_long_press_duration_ms` 是一层，ColorOS 自己覆盖的
+> 资源又是一层）。所以模块**不去猜**：system_server 侧记下框架每次真正返回的值，通过有序广播的
+> 结果回传给设置页，卡片上的「默认（xxxx ms）」就是设备实测值。该值要按过一次电源键之后才有
+> （只有 system_server 观察得到），在那之前只显示「默认」。
+
 设置里改完点「保存并应用」会立刻下发（不用重启 system_server），可选项是
-`默认 / 150 / 200 / 300 / 400 / 500 / 700 / 1000 / 1500 ms`，上限刻意留在 3000 ms 以内，
+`默认 / 150 / 200 / 300 / 400 / 500 / 700 / 1000 / 1500 / 2000 / 2500 ms`，上限留在 3000 ms 以内，
 以免撞上「超长按」（`config_veryLongPressTimeout`，本机 3500 ms）。
+
+> **改到 system_server 的代码必须重启手机才生效。** 模块注入 system_server 是在它启动时完成的，
+> 装完新 APK 只重启「系统界面」不会重新加载系统进程里那份 dex（LSPosed 会为 SystemUI 重新注入，
+> 但不会重启动系统进程）。判据：LSPosed 日志里搜 `(system)[com.nativepowermenu`，看不到
+> `system_server: hooked ...` 那一行就是系统进程还在跑旧代码。
 
 ## 设置界面
 
@@ -99,8 +112,8 @@
 │ 关闭后恢复 ColorOS 默认电源菜单   │
 └──────────────────────────────┘
 ┌──────────────────────────────┐
-│ 长按电源键延迟   默认（500 ms）│   0 = 不干预，用系统自己的 config 值
-│ ────────●─────────────────── │   默认 / 150 / 200 / … / 1500 ms
+│ 长按电源键延迟    默认（实测值）│   0 = 不干预，用系统自己的超时
+│ ────────●─────────────────── │   默认 / 150 / 200 / … / 2500 ms
 └──────────────────────────────┘
 电源菜单项
 ┌──────────────────────────────┐
@@ -179,8 +192,14 @@
 | `installed 1 hook(s) on ...GlobalActionsImpl#showGlobalActions` | SystemUI 侧挂钩成功 |
 | `apply receiver installed` | 「保存并应用」的通道就绪 |
 | `system_server: hooked 1 getDisableFlags method(s)` | **系统侧挂钩成功**，缺这行就是作用域没勾「系统框架」 |
+| `system_server: hooked 1 getLongPressTimeoutMs method(s) on ...PowerKeyRule` | 长按延迟的钩子就位（2.1.0 起） |
+| `system_server: power long-press timeout is the framework's own, N ms` | 按过一次电源键后，框架真正用的默认值 |
+| `system_server accepted the long-press timeout: N ms (framework's own: M ms)` | 设置页下发成功；`M` 就是设置页显示的「默认」 |
 | `system_server: rebooting to recovery` | 系统进程真的开始重启了 |
-| `no answer from system_server` | 系统侧没响应，同样是作用域的问题 |
+| `no answer from system_server` | 系统侧没响应：作用域没勾「系统框架」，**或者装了新版本之后没重启手机**（系统进程里的 dex 还是旧的） |
+
+排查顺序：先看有没有 `(system)[com.nativepowermenu` 开头的行 → 没有就是系统进程没注入（作用域 / 没重启）；
+有的话看 `hooked ...` 那几行有没有出现，缺哪条就是对应版本的代码没加载。
 
 
 ## 构建

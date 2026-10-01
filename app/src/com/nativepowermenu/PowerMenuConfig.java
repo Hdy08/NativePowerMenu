@@ -35,6 +35,8 @@ final class PowerMenuConfig {
     static final String EXTRA_LONG_PRESS_MS = "long_press_ms";
     /** {@code true} for "保存并应用" (restart SystemUI), {@code false} for a silent re-sync. */
     static final String EXTRA_RESTART = "restart";
+    /** SystemUI -&gt; settings app, in the ordered broadcast's result extras. */
+    static final String EXTRA_FRAMEWORK_DEFAULT_MS = "framework_default_ms";
 
     /**
      * Signature permission declared by the module. SystemUI requires it of the sender when it

@@ -12,11 +12,15 @@ final class LongPress {
 
     /** Below this the menu would appear from an accidental tap. */
     static final int MIN_MS = 100;
-    /** Kept well below {@code config_veryLongPressTimeout} (3500 ms on this device). */
+    /**
+     * Kept below the very-long-press timeout (3500 ms on this device), so the two cannot overlap.
+     * It reaches that far up because ColorOS' own power-key timeout turned out to be seconds, not
+     * the 500 ms the framework's {@code config_longPressOnPowerDurationMs} suggests.
+     */
     static final int MAX_MS = 3000;
 
     /** Offered by the settings screen; {@code 0} means "leave the framework's own value alone". */
-    static final int[] PRESETS = {0, 150, 200, 300, 400, 500, 700, 1000, 1500};
+    static final int[] PRESETS = {0, 150, 200, 300, 400, 500, 700, 1000, 1500, 2000, 2500};
 
     private LongPress() {
     }

@@ -436,9 +436,16 @@ long getLongPressTimeoutMs() {
 - `sDefaultLongPressTimeout` 是 `SingleKeyGestureDetector.init(Context)` 里从资源读出来的**静态**值，
   所有按键规则共用；所以改它会影响别的键，模块改成 hook `PowerKeyRule#getLongPressTimeoutMs` 的返回值，
   只动电源键。
-- 本机（ColorOS 16 / Android 16）实测：`config_longPressOnPowerDurationMs = 500`，
-  `config_veryLongPressTimeout = 3500`（超长按单独一条规则，默认行为 0 = 什么都不做）。上限因此设在
-  3000 ms 以内，避免和超长按叠在一起。
+- 资源值：`config_longPressOnPowerDurationMs = 500`、`config_veryLongPressTimeout = 3500`、
+  `config_longPressOnPowerBehavior = 5`、`config_veryLongPressOnPowerBehavior = 0`（解出来的是
+  framework-res 的**基础值**；75 个 RRO 里没有哪个覆盖这四个键，`Settings.Global` 里
+  `power_button_long_press*` 也是空的）。
+  但**实测按住电源键要两秒多才弹菜单**，和 500 ms 对不上 —— 说明 `SingleKeyGestureDetector.init()`
+  在这台机器上读的不是那个 500 的资源（jadx 给这两个 `getInteger` 解出来的名字
+  `config_lidNavigationAccessibility` / `device_idle_light_max_idle_to_ms` 明显是错的，说明它用的
+  资源表和设备对不上）。结论：**不要去推断这个值**，让 system_server 每次按键时把
+  `getLongPressTimeoutMs()` 的真实返回值记下来回报给设置页。
+- 上限因此设在 3000 ms 以内，避免和超长按（3500 ms）叠在一起。
 - 行为值 `1` 才是「弹全局菜单」；`5` 是「长按唤起助理」，那条用 `mLongPressOnPowerAssistantTimeoutMs`，
   模块不碰。
 - 顺带确认：`powerLongPress()` 里先问 Oplus 的 `interceptLongPowerPress()`，返回 true 时不调用

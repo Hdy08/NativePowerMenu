@@ -65,6 +65,8 @@ public class SettingsActivity extends Activity {
     private boolean mEnabled = true;
     /** Power long-press timeout in milliseconds; {@code 0} keeps the framework's own value. */
     private int mLongPressMs;
+    /** What the device uses without an override, as reported by system_server (0 = not known yet). */
+    private int mFrameworkDefaultMs;
 
     private ScrollView mScrollView;
     private LinearLayout mContent;
@@ -135,6 +137,7 @@ public class SettingsActivity extends Activity {
             public void onReceive(Context context, Intent result) {
                 mSaveButton.setEnabled(true);
                 boolean applied = getResultCode() == PowerMenuConfig.RESULT_APPLIED;
+                readFrameworkDefault(this);
                 Toast.makeText(SettingsActivity.this,
                         applied ? R.string.settings_applied : R.string.settings_not_applied,
                         Toast.LENGTH_SHORT).show();
@@ -145,7 +148,8 @@ public class SettingsActivity extends Activity {
     /**
      * Re-sends the stored settings when the screen is opened. This is what makes configuring the
      * module before it is enabled in LSPosed recoverable: the next time the app is opened the
-     * values reach SystemUI again (without restarting it).
+     * values reach SystemUI again (without restarting it), and the reply carries the timeout the
+     * device really uses.
      */
     private void syncSavedConfig() {
         SharedPreferences prefs = getSharedPreferences(PowerMenuConfig.PREF_FILE, MODE_PRIVATE);
@@ -153,7 +157,30 @@ public class SettingsActivity extends Activity {
             // The user has never saved anything; leave SystemUI's own values alone.
             return;
         }
-        pushConfig(false, null);
+        pushConfig(false, new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent result) {
+                readFrameworkDefault(this);
+            }
+        });
+    }
+
+    /**
+     * Picks the framework's own long-press timeout out of the ordered broadcast's result extras.
+     * Only system_server can measure it - the value is not reliably derivable from
+     * {@code config_longPressOnPowerDurationMs} - and it is 0 until it has seen a power key press.
+     */
+    private void readFrameworkDefault(BroadcastReceiver receiver) {
+        Bundle extras = receiver.getResultExtras(false);
+        if (extras == null) {
+            return;
+        }
+        int ms = extras.getInt(PowerMenuConfig.EXTRA_FRAMEWORK_DEFAULT_MS, 0);
+        if (ms <= 0 || ms == mFrameworkDefaultMs) {
+            return;
+        }
+        mFrameworkDefaultMs = ms;
+        updateLongPressLabel();
     }
 
     private void persistState() {
@@ -389,16 +416,9 @@ public class SettingsActivity extends Activity {
             mLongPressValue.setText(getString(R.string.settings_long_press_ms, ms));
             return;
         }
-        int deviceDefault = deviceLongPressMs();
-        mLongPressValue.setText(deviceDefault > 0
-                ? getString(R.string.settings_long_press_default_ms, deviceDefault)
+        mLongPressValue.setText(mFrameworkDefaultMs > 0
+                ? getString(R.string.settings_long_press_default_ms, mFrameworkDefaultMs)
                 : getString(R.string.settings_long_press_default));
-    }
-
-    /** What the framework would use without the module: {@code config_longPressOnPowerDurationMs}. */
-    private int deviceLongPressMs() {
-        return ResourceLookup.integer(getResources(), ResourceLookup.PKG_ANDROID,
-                "config_longPressOnPowerDurationMs", 0);
     }
 
     private void rebuildRows() {

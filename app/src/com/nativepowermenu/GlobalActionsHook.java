@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
@@ -148,7 +149,7 @@ final class GlobalActionsHook {
     private void onApplicationReady(Context context) {
         registerApplyReceiver(context);
         // Re-assert the stored long-press timeout: it lives in system_server, which outlives us.
-        SystemClient.setLongPressTimeout(PowerMenuConfig.get(context).longPressMs);
+        SystemClient.pushLongPressTimeout(PowerMenuConfig.get(context).longPressMs);
     }
 
     private static Context currentApplication() {
@@ -173,11 +174,17 @@ final class GlobalActionsHook {
                     if (config == null) {
                         return;
                     }
-                    // Confirm delivery so the settings app can tell the user what happened.
-                    setResultCode(PowerMenuConfig.RESULT_APPLIED);
                     // Takes effect immediately - the timeout lives in system_server, so it does not
                     // have to wait for SystemUI to come back.
-                    SystemClient.setLongPressTimeout(config.longPressMs);
+                    int frameworkDefault = SystemClient.pushLongPressTimeout(config.longPressMs);
+                    // Confirm delivery so the settings app can tell the user what happened, and hand
+                    // it the timeout the framework itself uses (0 when system_server has not seen a
+                    // power key press yet, since only it can observe that value).
+                    Bundle result = new Bundle();
+                    result.putInt(PowerMenuConfig.EXTRA_FRAMEWORK_DEFAULT_MS,
+                            Math.max(0, frameworkDefault));
+                    setResultExtras(result);
+                    setResultCode(PowerMenuConfig.RESULT_APPLIED);
                     // A silent re-sync (sent when the app is opened) only persists the values; the
                     // menu picks them up on the next long press because the cache was invalidated.
                     if (intent.getBooleanExtra(PowerMenuConfig.EXTRA_RESTART, true)) {

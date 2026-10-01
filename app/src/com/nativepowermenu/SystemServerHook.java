@@ -35,6 +35,12 @@ final class SystemServerHook {
 
     /** Written by the carrier hook, read by the key-rule hook; both live in system_server. */
     private static volatile int sLongPressTimeoutMs;
+    /**
+     * What the framework would use on its own, as seen on the last power key press. Reported back to
+     * SystemUI so the settings screen can show the device's real default instead of guessing it from
+     * {@code config_longPressOnPowerDurationMs}.
+     */
+    private static volatile int sFrameworkTimeoutMs;
 
     private final ClassLoader mClassLoader;
 
@@ -102,7 +108,10 @@ final class SystemServerHook {
                                         + SystemBridge.callingUid() + ": "
                                         + (timeout == 0 ? "framework default"
                                                 : timeout + " ms"));
-                                param.setResult(new int[]{SystemBridge.ACK});
+                                // The second element tells SystemUI what the framework itself uses,
+                                // so the settings screen can display the device's real default.
+                                param.setResult(new int[]{
+                                        SystemBridge.ACK, sFrameworkTimeoutMs});
                                 return;
                             }
 
@@ -153,6 +162,15 @@ final class SystemServerHook {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
                         try {
+                            // Whatever the framework decided, remember it: that is the number the
+                            // settings screen shows for "default", and it is not necessarily what
+                            // config_longPressOnPowerDurationMs says.
+                            Object result = param.getResult();
+                            if (result instanceof Long && (Long) result > 0
+                                    && (Long) result <= 60000) {
+                                sFrameworkTimeoutMs = (int) (long) (Long) result;
+                            }
+
                             int configured = sLongPressTimeoutMs;
                             if (configured <= 0) {
                                 logFrameworkDefault(param);
