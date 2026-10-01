@@ -61,6 +61,11 @@ public class SettingsActivity extends Activity {
 
     /** The content padding every card uses, so their contents line up. */
     private static final int CARD_PADDING_DP = 14;
+    /**
+     * Corner radius of every card - including the one a row is drawn with while it is being dragged
+     * over the list, which would otherwise not match the card it floats above.
+     */
+    private static final int CARD_RADIUS_DP = 18;
     /** Fixed metrics for the long-press card; wrap_content made it grow to most of a screen. */
     private static final int HEADER_HEIGHT_DP = 36;
     private static final int INPUT_HEIGHT_DP = 36;
@@ -923,7 +928,7 @@ public class SettingsActivity extends Activity {
         GradientDrawable background = new GradientDrawable();
         background.setShape(GradientDrawable.RECTANGLE);
         background.setColor(themeColor(android.R.attr.colorBackgroundFloating));
-        background.setCornerRadius(dp(18));
+        background.setCornerRadius(dp(CARD_RADIUS_DP));
         int stroke = themeColor(android.R.attr.textColorSecondary);
         background.setStroke(Math.max(1, Math.round(getResources().getDisplayMetrics().density / 2f)),
                 (stroke & 0x00FFFFFF) | 0x33000000);
@@ -937,7 +942,7 @@ public class SettingsActivity extends Activity {
         GradientDrawable background = new GradientDrawable();
         background.setShape(GradientDrawable.RECTANGLE);
         background.setColor(blend(surface, accent, 0.12f));
-        background.setCornerRadius(dp(14));
+        background.setCornerRadius(dp(CARD_RADIUS_DP));
         int stroke = themeColor(android.R.attr.textColorSecondary);
         background.setStroke(Math.max(1, Math.round(getResources().getDisplayMetrics().density / 2f)),
                 (stroke & 0x00FFFFFF) | 0x33000000);
