@@ -129,7 +129,7 @@ final class SystemServerHook {
             protected void afterHookedMethod(MethodHookParam param) {
                 try {
                     int configured = sLongPressTimeoutMs;
-                    if (configured <= 0 || param.args == null || param.args.length != 3
+                    if (param.args == null || param.args.length != 3
                             || !(param.args[0] instanceof Integer)
                             || !(param.args[2] instanceof KeyEvent)) {
                         return;
@@ -142,11 +142,16 @@ final class SystemServerHook {
                     if (param.getResult() instanceof Long) {
                         deviceValue = (int) (long) (Long) param.getResult();
                         if (deviceValue > 0 && deviceValue <= 60000) {
+                            // This - not the 500 ms the plain long-press rule reports - is the value
+                            // the device really uses, so it is the one the settings screen calls
+                            // "default". Recorded even when no override is set.
                             sFrameworkTimeoutMs = deviceValue;
                         }
                     }
-                    param.setResult((long) configured);
-                    logApplied(deviceValue, configured);
+                    if (configured > 0) {
+                        param.setResult((long) configured);
+                        logApplied(deviceValue, configured);
+                    }
                 } catch (Throwable t) {
                     // Never let this hurt the input path; the device value stays in place.
                     ModuleLog.w("system_server: could not apply the timeout: " + t);
@@ -304,20 +309,11 @@ final class SystemServerHook {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
                         try {
-                            // Whatever the framework decided, remember it: that is the number the
-                            // settings screen shows for "default", and it is not necessarily what
-                            // config_longPressOnPowerDurationMs says.
-                            Object result = param.getResult();
-                            int framework = 0;
-                            if (result instanceof Long && (Long) result > 0
-                                    && (Long) result <= 60000) {
-                                framework = (int) (long) (Long) result;
-                                sFrameworkTimeoutMs = framework;
-                            }
-
                             // The plain long-press path. Kept because it is the one that fires on
                             // stock AOSP; on ColorOS the menu comes from the very-long press (see
-                            // installVeryLongPressHook), so this is silent.
+                            // installVeryLongPressHook), so this stays silent - and deliberately
+                            // does NOT record the value it returns (500 ms here), because that is
+                            // not the delay the device actually uses.
                             int configured = sLongPressTimeoutMs;
                             if (configured > 0) {
                                 param.setResult((long) configured);

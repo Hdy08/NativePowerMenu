@@ -1,7 +1,6 @@
 package com.nativepowermenu;
 
 import android.app.ActionBar;
-import android.app.AlertDialog;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -17,6 +16,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.os.Bundle;
 import android.text.InputType;
+import android.view.inputmethod.EditorInfo;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -79,7 +79,8 @@ public class SettingsActivity extends Activity {
     private LinearLayout mItemContainer;
     private Switch mMasterSwitch;
     private SeekBar mLongPressSeek;
-    private TextView mLongPressValue;
+    private EditText mLongPressInput;
+    private ImageButton mLongPressReset;
     private Button mSaveButton;
 
     /** The row currently under the finger, or {@code null} when nothing is being dragged. */
@@ -186,7 +187,7 @@ public class SettingsActivity extends Activity {
             return;
         }
         mFrameworkDefaultMs = ms;
-        updateLongPressLabel();
+        syncLongPressViews();
     }
 
     private void persistState() {
@@ -362,9 +363,9 @@ public class SettingsActivity extends Activity {
      * How long the power key has to be held before the menu appears.
      *
      * <p>The slider covers {@link LongPress#MIN_MS}..{@link LongPress#MAX_MS} in
-     * {@link LongPress#STEP_MS} steps, the value on the right can be tapped to type an exact number,
-     * and the icon button restores the device's own value (which is what {@code 0} means in the
-     * stored config).
+     * {@link LongPress#STEP_MS} steps; the value on the right is an editable field, so an exact
+     * number can simply be typed in; and the icon button next to the title restores the device's own
+     * value, which is what {@code 0} means in the stored config (and what dims the button).
      */
     private View buildLongPressCard() {
         LinearLayout card = new LinearLayout(this);
@@ -380,27 +381,54 @@ public class SettingsActivity extends Activity {
         title.setText(R.string.settings_long_press);
         title.setTextSize(16);
         title.setTextColor(themeColorList(android.R.attr.textColorPrimary));
-        header.addView(title, new LinearLayout.LayoutParams(
+        header.addView(title);
+
+        mLongPressReset = new ImageButton(this);
+        mLongPressReset.setImageResource(R.drawable.ic_restore);
+        mLongPressReset.setImageTintList(themeColorList(android.R.attr.colorAccent));
+        mLongPressReset.setBackground(themeBackground(
+                android.R.attr.selectableItemBackgroundBorderless));
+        mLongPressReset.setContentDescription(getString(R.string.settings_long_press_reset));
+        mLongPressReset.setOnClickListener(v -> resetLongPress());
+        int button = dp(36);
+        mLongPressReset.setPadding(dp(6), dp(6), dp(6), dp(6));
+        header.addView(mLongPressReset, new LinearLayout.LayoutParams(button, button));
+
+        header.addView(new View(this), new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        mLongPressValue = new TextView(this);
-        mLongPressValue.setTextSize(14);
-        mLongPressValue.setTextColor(themeColorList(android.R.attr.colorAccent));
-        mLongPressValue.setPadding(dp(8), dp(6), dp(8), dp(6));
-        mLongPressValue.setBackground(themeBackground(
-                android.R.attr.selectableItemBackgroundBorderless));
-        mLongPressValue.setOnClickListener(v -> showLongPressInput());
-        header.addView(mLongPressValue);
+        mLongPressInput = new EditText(this);
+        mLongPressInput.setTextSize(14);
+        mLongPressInput.setTextColor(themeColorList(android.R.attr.colorAccent));
+        mLongPressInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        mLongPressInput.setSingleLine(true);
+        mLongPressInput.setGravity(Gravity.END);
+        mLongPressInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        mLongPressInput.setBackground(themeBackground(android.R.attr.editTextBackground));
+        mLongPressInput.setPadding(dp(4), dp(6), dp(4), dp(6));
+        mLongPressInput.setWidth(dp(84));
+        // Committed when the field is left or "done" is pressed, so half-typed numbers are not applied.
+        mLongPressInput.setOnFocusChangeListener((view, hasFocus) -> {
+            if (!hasFocus) {
+                applyTypedLongPress();
+            }
+        });
+        mLongPressInput.setOnEditorActionListener((view, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                applyTypedLongPress();
+                mLongPressInput.clearFocus();
+                return true;
+            }
+            return false;
+        });
+        header.addView(mLongPressInput);
 
-        ImageButton reset = new ImageButton(this);
-        reset.setImageResource(R.drawable.ic_restore);
-        reset.setImageTintList(themeColorList(android.R.attr.textColorSecondary));
-        reset.setBackground(themeBackground(
-                android.R.attr.selectableItemBackgroundBorderless));
-        reset.setContentDescription(getString(R.string.settings_long_press_reset));
-        reset.setOnClickListener(v -> resetLongPress());
-        int button = dp(40);
-        header.addView(reset, new LinearLayout.LayoutParams(button, button));
+        TextView unit = new TextView(this);
+        unit.setText(R.string.settings_long_press_unit);
+        unit.setTextSize(12);
+        unit.setPadding(dp(4), 0, 0, 0);
+        unit.setTextColor(themeColorList(android.R.attr.textColorSecondary));
+        header.addView(unit);
         card.addView(header);
 
         mLongPressSeek = new SeekBar(this);
@@ -415,7 +443,7 @@ public class SettingsActivity extends Activity {
                     return;
                 }
                 mLongPressMs = LongPress.stepToMs(progress);
-                updateLongPressLabel();
+                syncLongPressViews();
             }
 
             @Override
@@ -433,17 +461,12 @@ public class SettingsActivity extends Activity {
         return card;
     }
 
-    /** The number the slider and the label show: the override, or the device's own value. */
+    /** The number shown in the field: the override, or the device's own value. */
     private int displayedLongPressMs() {
         if (mLongPressMs > 0) {
             return mLongPressMs;
         }
         return mFrameworkDefaultMs > 0 ? mFrameworkDefaultMs : LongPress.DEVICE_DEFAULT_MS;
-    }
-
-    private void setLongPressMs(int ms) {
-        mLongPressMs = LongPress.clamp(ms);
-        syncLongPressViews();
     }
 
     /** Back to "let the device decide", which is what the stored {@code 0} means. */
@@ -456,54 +479,30 @@ public class SettingsActivity extends Activity {
         mSuppressSeek = true;
         mLongPressSeek.setProgress(LongPress.msToStep(displayedLongPressMs()));
         mSuppressSeek = false;
-        updateLongPressLabel();
+        mLongPressInput.setText(String.valueOf(displayedLongPressMs()));
+        // Dimmed while the device's own value is in use, so the state is visible at a glance.
+        boolean overridden = mLongPressMs > 0;
+        mLongPressReset.setEnabled(overridden);
+        mLongPressReset.setAlpha(overridden ? 1f : 0.4f);
     }
 
-    private void updateLongPressLabel() {
-        if (mLongPressMs > 0) {
-            mLongPressValue.setText(getString(R.string.settings_long_press_ms, mLongPressMs));
-            return;
-        }
-        mLongPressValue.setText(mFrameworkDefaultMs > 0
-                ? getString(R.string.settings_long_press_default_ms, mFrameworkDefaultMs)
-                : getString(R.string.settings_long_press_default));
-    }
-
-    /** Typing an exact value, for anything the 100 ms slider steps cannot land on. */
-    private void showLongPressInput() {
-        final EditText input = new EditText(this);
-        input.setInputType(InputType.TYPE_CLASS_NUMBER);
-        input.setText(String.valueOf(displayedLongPressMs()));
-        input.setSelection(input.getText().length());
-
-        FrameLayout wrapper = new FrameLayout(this);
-        wrapper.setPadding(dp(24), 0, dp(24), 0);
-        wrapper.addView(input);
-
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.settings_long_press)
-                .setMessage(getString(R.string.settings_long_press_range,
-                        LongPress.MIN_MS, LongPress.MAX_MS, LongPress.STEP_MS))
-                .setView(wrapper)
-                .setPositiveButton(android.R.string.ok,
-                        (dialog, which) -> applyTypedLongPress(input))
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
-    }
-
-    private void applyTypedLongPress(EditText input) {
+    /** Takes whatever was typed into the field, clamped into range. */
+    private void applyTypedLongPress() {
         int ms;
         try {
-            ms = Integer.parseInt(input.getText().toString().trim());
+            ms = Integer.parseInt(mLongPressInput.getText().toString().trim());
         } catch (Throwable t) {
             ms = -1;
         }
         if (ms < LongPress.MIN_MS || ms > LongPress.MAX_MS) {
             Toast.makeText(this, getString(R.string.settings_long_press_invalid,
                     LongPress.MIN_MS, LongPress.MAX_MS), Toast.LENGTH_SHORT).show();
+            // Keep the previous value instead of guessing what was meant.
+            syncLongPressViews();
             return;
         }
-        setLongPressMs(ms);
+        mLongPressMs = ms;
+        syncLongPressViews();
     }
 
     private void rebuildRows() {
