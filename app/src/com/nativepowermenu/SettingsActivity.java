@@ -59,6 +59,11 @@ import java.util.Set;
  */
 public class SettingsActivity extends Activity {
 
+    /** Fixed metrics for the long-press card; wrap_content made it grow to most of a screen. */
+    private static final int HEADER_HEIGHT_DP = 44;
+    private static final int INPUT_HEIGHT_DP = 40;
+    private static final int SEEK_HEIGHT_DP = 48;
+
     /** How long the rows around the dragged one take to slide out of the way. */
     private static final long GAP_ANIM_MS = 140L;
     private static final long DROP_ANIM_MS = 160L;
@@ -376,12 +381,16 @@ public class SettingsActivity extends Activity {
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setMinimumHeight(dp(HEADER_HEIGHT_DP));
 
         TextView title = new TextView(this);
         title.setText(R.string.settings_long_press);
         title.setTextSize(16);
+        title.setSingleLine(true);
         title.setTextColor(themeColorList(android.R.attr.textColorPrimary));
-        header.addView(title);
+        // The title takes the slack, which keeps the value and the button pinned to the right.
+        header.addView(title, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         mLongPressReset = new ImageButton(this);
         mLongPressReset.setImageResource(R.drawable.ic_restore);
@@ -390,12 +399,11 @@ public class SettingsActivity extends Activity {
                 android.R.attr.selectableItemBackgroundBorderless));
         mLongPressReset.setContentDescription(getString(R.string.settings_long_press_reset));
         mLongPressReset.setOnClickListener(v -> resetLongPress());
-        int button = dp(36);
         mLongPressReset.setPadding(dp(6), dp(6), dp(6), dp(6));
+        // Explicit heights everywhere: with wrap_content the theme's edit/seekbar metrics made this
+        // card roughly a screen tall (the row ended up vertically centred in it).
+        int button = dp(36);
         header.addView(mLongPressReset, new LinearLayout.LayoutParams(button, button));
-
-        header.addView(new View(this), new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         mLongPressInput = new EditText(this);
         mLongPressInput.setTextSize(14);
@@ -406,7 +414,8 @@ public class SettingsActivity extends Activity {
         mLongPressInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
         mLongPressInput.setBackground(themeBackground(android.R.attr.editTextBackground));
         mLongPressInput.setPadding(dp(4), dp(6), dp(4), dp(6));
-        mLongPressInput.setWidth(dp(84));
+        // Wrapping the text keeps the underline as long as the number, not as long as a fixed box.
+        mLongPressInput.setMinWidth(dp(56));
         // Committed when the field is left or "done" is pressed, so half-typed numbers are not applied.
         mLongPressInput.setOnFocusChangeListener((view, hasFocus) -> {
             if (!hasFocus) {
@@ -421,15 +430,18 @@ public class SettingsActivity extends Activity {
             }
             return false;
         });
-        header.addView(mLongPressInput);
+        header.addView(mLongPressInput, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(INPUT_HEIGHT_DP)));
 
         TextView unit = new TextView(this);
         unit.setText(R.string.settings_long_press_unit);
         unit.setTextSize(12);
         unit.setPadding(dp(4), 0, 0, 0);
         unit.setTextColor(themeColorList(android.R.attr.textColorSecondary));
-        header.addView(unit);
-        card.addView(header);
+        header.addView(unit, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        card.addView(header, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(HEADER_HEIGHT_DP)));
 
         mLongPressSeek = new SeekBar(this);
         mLongPressSeek.setMax(LongPress.steps());
@@ -455,9 +467,16 @@ public class SettingsActivity extends Activity {
             }
         });
         card.addView(mLongPressSeek, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(SEEK_HEIGHT_DP)));
 
         syncLongPressViews();
+        // One line in logcat, so a layout that misbehaves again can be diagnosed without guessing.
+        card.post(() -> ModuleLog.d("long-press card measured:"
+                + " card=" + card.getHeight()
+                + " header=" + header.getHeight()
+                + " input=" + mLongPressInput.getHeight()
+                + " reset=" + mLongPressReset.getHeight()
+                + " seek=" + mLongPressSeek.getHeight()));
         return card;
     }
 

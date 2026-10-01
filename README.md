@@ -125,6 +125,8 @@ public long modifyPressTimeout(int pressType, long veryLongPressTimeout, KeyEven
 
 > 「默认」这个数字取自 system_server 实际观察到的那一个 —— 也就是
 > `modifyPressTimeout` 原本会返回的 2500，**不是**普通长按规则报告的 500 ms。
+> 这一条要装完新版本**重启手机**后才生效：设置页显示的默认值是 system_server 回报的，
+> 而 system_server 里的模块代码只在开机时加载。
 
 > **改到 system_server 的代码必须重启手机才生效。** 模块注入 system_server 是在它启动时完成的，
 > 装完新 APK 只重启「系统界面」不会重新加载系统进程里那份 dex（LSPosed 会为 SystemUI 重新注入，
@@ -142,7 +144,7 @@ public long modifyPressTimeout(int pressType, long veryLongPressTimeout, KeyEven
 │ 关闭后恢复 ColorOS 默认电源菜单   │
 └──────────────────────────────┘
 ┌──────────────────────────────┐
-│ 长按弹出菜单延迟 ⟳   2500 ms │   ⟳ = 恢复默认（默认状态下变暗）；数值可直接编辑
+│ 长按弹出菜单延迟 ⟳    2500 ms │   ⟳ = 恢复默认（默认状态下变暗）；数值可直接编辑
 │ ────────●─────────────────── │   500 – 5000 ms，拖动步进 100 ms
 └──────────────────────────────┘
 电源菜单项
@@ -165,6 +167,9 @@ public long modifyPressTimeout(int pressType, long veryLongPressTimeout, KeyEven
   松手时被拖行用 160ms 滑进空位，顺序才真正提交 —— 此时其它行已经在正确位置上，不需要再动。
   整条链路的 `clipChildren` 都关掉了，抬起来的行靠 `setElevation` 浮在列表之上
   （`ViewGroup` 会按 Z 重排绘制顺序）。
+- **长按卡片的高度是写死的**（标题行 44dp / 输入框 40dp / 滑杆 48dp）：这台机器的主题下
+  `wrap_content` 会把这张卡片撑到接近一整屏（标题行被垂直居中、滑杆被挤出可视区），
+  而且 EditText 的宽度改成随内容收缩，下划线才会跟着数字长度走。
 - **避让系统栏**：模块 `targetSdk 36`，Android 强制 edge-to-edge，设置页把系统栏 + 挖孔 inset
   加进内容内边距；电源菜单那个窗口是全屏、且层级在状态栏之上（`TYPE_STATUS_BAR_SUB_PANEL`），
   系统不会替它避让，同样按 inset 加内边距，保证菜单顶部元素不会跑进状态栏。
