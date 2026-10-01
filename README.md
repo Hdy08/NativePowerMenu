@@ -80,10 +80,17 @@
 `powerLongPress()` 会先问 Oplus 的 `oplusInterceptLongPowerPress()`，它只在**屏幕已熄灭**时截胡
 （返回 true），亮屏时只做一次振动就放行 —— 所以亮屏下的菜单确实走 AOSP 那条路。
 
-模块挂的是 `com.android.server.policy.PhoneWindowManager$PowerKeyRule#getLongPressTimeoutMs`：
-配置了值就在返回值里替换掉它（电源键被设成「长按唤起助理」时不干预，那条走的是另一个更短的
-超时）。这个钩子只影响电源键，不会动到 `SingleKeyGestureDetector` 里那份静态默认值 —— 那份是
-所有按键规则共用的。
+模块挂的是 `com.android.server.policy.PhoneWindowManager$PowerKeyRule#getLongPressTimeoutMs`
+（2.1.2 起**两种情况都替换**，原因见下）。这个钩子只影响电源键，不会动到
+`SingleKeyGestureDetector` 里那份静态默认值 —— 那份是所有按键规则共用的。
+
+> **关键：ColorOS 的长按行为是 5（"长按唤起助理"）而不是 1。** 设备上
+> `config_longPressOnPowerBehavior = 5`、`Settings.Global.power_button_long_press` 没设，
+> 所以 `getResolvedLongPressOnPowerBehavior()` 返回 5，`PowerKeyRule.getLongPressTimeoutMs()`
+> 走的是 `mLongPressOnPowerAssistantTimeoutMs` 那一支；而 ColorOS 把这条「助理」链路接到了
+> 自己的关机流程上（`oplusHandleAssistLaunchMode` 里按 `invocation_type == 6` 分流，最后仍然
+> 调用 `showGlobalActions()`，所以模块的钩子能拦住它）。也就是说**这台机器上"助理的超时"就是
+> "电源菜单的超时"**。2.1.1 之前把 behavior 5 当成"真的唤助理"而跳过，所以改了没反应。
 
 > **默认值不能只看 `config_longPressOnPowerDurationMs`。** framework-res 里写的是 500 ms，但实测
 > 按住电源键要两秒多菜单才出来，说明真正生效的值另有来源（`Settings.Global` 的
@@ -193,7 +200,7 @@
 | `apply receiver installed` | 「保存并应用」的通道就绪 |
 | `system_server: hooked 1 getDisableFlags method(s)` | **系统侧挂钩成功**，缺这行就是作用域没勾「系统框架」 |
 | `system_server: hooked 1 getLongPressTimeoutMs method(s) on ...PowerKeyRule` | 长按延迟的钩子就位（2.1.0 起） |
-| `system_server: power long-press timeout is the framework's own, N ms` | 按过一次电源键后，框架真正用的默认值 |
+| `power key long press: behavior=5 framework=2500 ms, applied=300 ms` | 按电源键时钩子确实被调用：设备走的是哪条行为、框架自己的超时、模块最终用的值。每进程前 4 次 + 值变化时记录 |
 | `system_server accepted the long-press timeout: N ms (framework's own: M ms)` | 设置页下发成功；`M` 就是设置页显示的「默认」 |
 | `system_server: rebooting to recovery` | 系统进程真的开始重启了 |
 | `no answer from system_server` | 系统侧没响应：作用域没勾「系统框架」，**或者装了新版本之后没重启手机**（系统进程里的 dex 还是旧的） |

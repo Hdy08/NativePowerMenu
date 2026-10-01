@@ -28,9 +28,6 @@ final class SystemServerHook {
     private static final String CLASS_POWER_KEY_RULE =
             "com.android.server.policy.PhoneWindowManager$PowerKeyRule";
 
-    /** {@code PhoneWindowManager.LONG_PRESS_POWER_ASSISTANT}. */
-    private static final int LONG_PRESS_POWER_ASSISTANT = 5;
-
     private static final String METHOD_LONG_PRESS_TIMEOUT = "getLongPressTimeoutMs";
 
     /** Written by the carrier hook, read by the key-rule hook; both live in system_server. */
@@ -44,10 +41,13 @@ final class SystemServerHook {
 
     private final ClassLoader mClassLoader;
 
+    /** How many presses get logged before only changes are. */
+    private static final int HOOK_LOG_LIMIT = 4;
+
     private boolean mCarrierInstalled;
     private boolean mPowerKeyInstalled;
-    /** The framework's own timeout, logged once so it can be compared with what the user picked. */
-    private boolean mDefaultLogged;
+    private int mHookLogs;
+    private int mLastApplied = -1;
 
     SystemServerHook(ClassLoader classLoader) {
         mClassLoader = classLoader;
@@ -166,22 +166,25 @@ final class SystemServerHook {
                             // settings screen shows for "default", and it is not necessarily what
                             // config_longPressOnPowerDurationMs says.
                             Object result = param.getResult();
+                            int framework = 0;
                             if (result instanceof Long && (Long) result > 0
                                     && (Long) result <= 60000) {
-                                sFrameworkTimeoutMs = (int) (long) (Long) result;
+                                framework = (int) (long) (Long) result;
+                                sFrameworkTimeoutMs = framework;
                             }
 
                             int configured = sLongPressTimeoutMs;
-                            if (configured <= 0) {
-                                logFrameworkDefault(param);
-                                return;
+                            int applied = configured > 0 ? configured : framework;
+                            logApplied(param.thisObject, framework, applied);
+
+                            // ColorOS routes its power menu through the behavior-5 ("hold for the
+                            // assistant") path, so the assistant's timeout IS this device's power
+                            // menu timeout - overriding it here is the whole point, not a side
+                            // effect. (Stock AOSP would launch the assistant instead; this module
+                            // only exists for ColorOS.)
+                            if (configured > 0) {
+                                param.setResult((long) configured);
                             }
-                            if (isAssistantLongPress(param.thisObject)) {
-                                // The power key is configured to launch the assistant, whose
-                                // timeout is a separate, deliberately short one.
-                                return;
-                            }
-                            param.setResult((long) configured);
                         } catch (Throwable t) {
                             // Falling through to the framework's own value is the safe outcome.
                             ModuleLog.w("system_server: could not apply the long-press timeout: " + t);
@@ -200,24 +203,34 @@ final class SystemServerHook {
         return true;
     }
 
-    /** {@code PhoneWindowManager.LONG_PRESS_POWER_ASSISTANT} means "hold power for the assistant". */
-    private boolean isAssistantLongPress(Object powerKeyRule) {
+    /**
+     * {@code PhoneWindowManager.getResolvedLongPressOnPowerBehavior()}: 1 = global actions,
+     * 5 = "hold power for the assistant" (which is how ColorOS reaches its power menu). Logged so a
+     * single power key press in the LSPosed log says exactly which path the device takes.
+     */
+    private int resolvedBehavior(Object powerKeyRule) {
         try {
             Object policy = XposedHelpers.getObjectField(powerKeyRule, "this$0");
             Object behavior = XposedHelpers.callMethod(policy, "getResolvedLongPressOnPowerBehavior");
-            return behavior instanceof Integer && (Integer) behavior == LONG_PRESS_POWER_ASSISTANT;
+            return behavior instanceof Integer ? (Integer) behavior : -1;
         } catch (Throwable t) {
-            return false;
+            return -1;
         }
     }
 
-    /** Once per process: records what the device would do without the module. */
-    private void logFrameworkDefault(XC_MethodHook.MethodHookParam param) {
-        if (mDefaultLogged) {
+    /**
+     * Logs what the framework would use and what the module returned. The first few presses of every
+     * process are always logged - that is what makes "the setting does nothing" diagnosable from the
+     * log alone - and afterwards only when the applied value changes, so pressing the power key to
+     * lock the screen does not fill the log.
+     */
+    private void logApplied(Object powerKeyRule, int framework, int applied) {
+        if (mHookLogs >= HOOK_LOG_LIMIT && applied == mLastApplied) {
             return;
         }
-        mDefaultLogged = true;
-        ModuleLog.d("system_server: power long-press timeout is the framework's own, "
-                + param.getResult() + " ms");
+        mHookLogs++;
+        mLastApplied = applied;
+        ModuleLog.d("power key long press: behavior=" + resolvedBehavior(powerKeyRule)
+                + " framework=" + framework + " ms, applied=" + applied + " ms");
     }
 }

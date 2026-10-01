@@ -446,8 +446,13 @@ long getLongPressTimeoutMs() {
   资源表和设备对不上）。结论：**不要去推断这个值**，让 system_server 每次按键时把
   `getLongPressTimeoutMs()` 的真实返回值记下来回报给设置页。
 - 上限因此设在 3000 ms 以内，避免和超长按（3500 ms）叠在一起。
-- 行为值 `1` 才是「弹全局菜单」；`5` 是「长按唤起助理」，那条用 `mLongPressOnPowerAssistantTimeoutMs`，
-  模块不碰。
+- 行为值 `1` 是「直接弹全局菜单」，`5` 是「长按唤起助理」，后者用
+  `mLongPressOnPowerAssistantTimeoutMs`。**这台设备实际是 5**（`config_longPressOnPowerBehavior = 5`，
+  `Settings.Global.power_button_long_press` 未设置），但用户按出来的却是本模块的电源菜单 ——
+  因为 ColorOS 把「助理」这条链路接到了自己的关机流程：`PhoneWindowManagerExtImpl.oplusHandleAssistLaunchMode()`
+  按 `invocation_type == 6`（正是 `powerLongPress()` case 5 传进去的那个值）分流，
+  `mShutdownByPowerEnabled` 打开时最终走到 `showGlobalActions()`。所以在这台机器上
+  **助理超时 = 电源菜单超时**，模块必须连 behavior 5 一起替换（2.1.1 之前跳过了它，于是"改了没反应"）。
 - 顺带确认：`powerLongPress()` 里先问 Oplus 的 `interceptLongPowerPress()`，返回 true 时不调用
   `showGlobalActions()`；设备实测走到了 `showGlobalActions()`（模块的钩子能拦住并弹出 AOSP 菜单），
   说明 ColorOS 这条扩展没有截胡。
