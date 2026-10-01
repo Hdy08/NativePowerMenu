@@ -65,9 +65,28 @@
 挑这个方法的另一个原因是它**有返回值**：system_server 能把 ACK / NAK 回给 SystemUI，
 于是「对面根本没加载」和「重启本身失败」能被区分开，而不是静默失败。
 
+同一个通道也用来下发「长按电源键延迟」：magic `userId` 的高 16 位区分请求类型，低 16 位带上
+毫秒值（`0` = 用系统默认），所以不需要第二条 binder 方法。
+
 > 嵌套的同进程 binder 调用会继承调用方的 uid，所以 system_server 侧在 `IPowerManager.reboot` 前
 > 必须 `Binder.clearCallingIdentity()`，否则 `PowerManagerService` 看到的是 SystemUI 的 uid 10237，
 > 直接抛 `SecurityException: ... does not have android.permission.REBOOT`。
+
+### 长按电源键延迟
+
+系统里「按住电源键多久弹出电源菜单」由 `PhoneWindowManager` 的一条按键规则决定：
+`SingleKeyGestureDetector` 用它给出的超时来判定长按，超时后调用 `powerLongPress()` →
+`showGlobalActions()`（也就是本模块替换掉的那个入口）。设备上的默认值来自
+`config_longPressOnPowerDurationMs`（**500 ms**）。
+
+模块挂的是 `com.android.server.policy.PhoneWindowManager$PowerKeyRule#getLongPressTimeoutMs`：
+配置了值就在返回值里替换掉它（电源键被设成「长按唤起助理」时不干预，那条走的是另一个更短的
+超时）。这个钩子只影响电源键，不会动到 `SingleKeyGestureDetector` 里那份静态默认值 —— 那份是
+所有按键规则共用的。
+
+设置里改完点「保存并应用」会立刻下发（不用重启 system_server），可选项是
+`默认 / 150 / 200 / 300 / 400 / 500 / 700 / 1000 / 1500 ms`，上限刻意留在 3000 ms 以内，
+以免撞上「超长按」（`config_veryLongPressTimeout`，本机 3500 ms）。
 
 ## 设置界面
 
@@ -78,6 +97,10 @@
 ┌──────────────────────────────┐
 │ 启用模块              [ ●——] │   总开关，关掉立刻回到 ColorOS 默认电源菜单
 │ 关闭后恢复 ColorOS 默认电源菜单   │
+└──────────────────────────────┘
+┌──────────────────────────────┐
+│ 长按电源键延迟   默认（500 ms）│   0 = 不干预，用系统自己的 config 值
+│ ────────●─────────────────── │   默认 / 150 / 200 / … / 1500 ms
 └──────────────────────────────┘
 电源菜单项
 ┌──────────────────────────────┐
@@ -105,6 +128,8 @@
 - **保存并应用**：写入设置 → 有序广播推给 SystemUI → SystemUI 存盘并重启自己（它是 persistent 应用，
   被系统立刻拉回）。广播的结果码用来判断是否真的送达，没送到会提示「未生效：请确认模块已启用」。
 - 打开设置页时会静默重推一次已保存的值（不重启），因此「先配置、后启用模块」也不会丢配置。
+- **长按延迟立即生效**：它由 system_server 里的钩子执行，广播一到就先下发过去，不必等 SystemUI
+  重启完（SystemUI 每次启动也会重新下发一次，因为 system_server 比它活得久）。
 - 广播由模块自己声明的 signature 权限保护，SystemUI 注册时要求发送方持有该权限，
   别的应用无法通过这个通道重启 SystemUI。
 

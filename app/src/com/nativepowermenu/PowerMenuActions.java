@@ -30,7 +30,7 @@ import de.robv.android.xposed.XposedHelpers;
  *   <li>{@code emergency} -&gt; {@code ACTION_EMERGENCY_ASSISTANCE}
  *   <li>{@code lockdown} -&gt; {@code LockPatternUtils.requireStrongAuth()} + {@code IWindowManager.lockNow()}
  *   <li>{@code bootloader} / {@code recovery} -&gt; the extended entries, which need the system
- *       process (see {@link RebootBridge}); a tap reboots immediately, with no confirmation step
+ *       process (see {@link SystemBridge}); a tap reboots immediately, with no confirmation step
  * </ul>
  */
 final class PowerMenuActions {
@@ -119,10 +119,10 @@ final class PowerMenuActions {
                     }
                     break;
                 case PowerMenuItems.BOOTLOADER:
-                    items.add(simple(key, () -> rebootTo(RebootBridge.REASON_BOOTLOADER)));
+                    items.add(simple(key, () -> rebootTo(SystemBridge.REASON_BOOTLOADER)));
                     break;
                 case PowerMenuItems.RECOVERY:
-                    items.add(simple(key, () -> rebootTo(RebootBridge.REASON_RECOVERY)));
+                    items.add(simple(key, () -> rebootTo(SystemBridge.REASON_RECOVERY)));
                     break;
                 default:
                     // Unknown key: skip rather than showing a dead button.
@@ -157,10 +157,10 @@ final class PowerMenuActions {
     /**
      * Extended reboot. SystemUI cannot reboot with a custom reason itself (no
      * {@code android.permission.REBOOT}), so the request travels through the system process;
-     * see {@link RebootBridge}.
+     * see {@link SystemBridge}.
      */
     private void rebootTo(String reason) {
-        if (RebootClient.reboot(mManager, reason)) {
+        if (SystemClient.reboot(mManager, reason)) {
             ModuleLog.d("system_server acknowledged the reboot to " + reason);
             return;
         }

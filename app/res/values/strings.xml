@@ -11,6 +11,12 @@
     <string name="settings_applied">已应用，系统界面重启中</string>
     <string name="settings_not_applied">未生效：请确认模块已启用</string>
 
+    <!-- Power long-press timeout -->
+    <string name="settings_long_press">长按电源键延迟</string>
+    <string name="settings_long_press_ms">%1$d ms</string>
+    <string name="settings_long_press_default">默认</string>
+    <string name="settings_long_press_default_ms">默认（%1$d ms）</string>
+
     <!-- Extended power menu entries -->
     <string name="reboot_bootloader_title">引导模式</string>
     <string name="reboot_recovery_title">恢复模式</string>

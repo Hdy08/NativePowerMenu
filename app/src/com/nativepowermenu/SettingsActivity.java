@@ -25,6 +25,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -62,11 +63,15 @@ public class SettingsActivity extends Activity {
     private final Set<String> mDisabled = new LinkedHashSet<>();
 
     private boolean mEnabled = true;
+    /** Power long-press timeout in milliseconds; {@code 0} keeps the framework's own value. */
+    private int mLongPressMs;
 
     private ScrollView mScrollView;
     private LinearLayout mContent;
     private LinearLayout mItemContainer;
     private Switch mMasterSwitch;
+    private SeekBar mLongPressSeek;
+    private TextView mLongPressValue;
     private Button mSaveButton;
 
     /** The row currently under the finger, or {@code null} when nothing is being dragged. */
@@ -112,12 +117,14 @@ public class SettingsActivity extends Activity {
                 prefs.getBoolean(PowerMenuConfig.KEY_ENABLED, true),
                 prefs.getString(PowerMenuConfig.KEY_ORDER, null),
                 prefs.getString(PowerMenuConfig.KEY_DISABLED, null),
+                prefs.getInt(PowerMenuConfig.KEY_LONG_PRESS_MS, 0),
                 getResources());
         mEnabled = config.enabled;
         mOrder.clear();
         mOrder.addAll(config.order);
         mDisabled.clear();
         mDisabled.addAll(config.disabled);
+        mLongPressMs = config.longPressMs;
     }
 
     private void saveAndApply() {
@@ -156,6 +163,7 @@ public class SettingsActivity extends Activity {
                 .putBoolean(PowerMenuConfig.KEY_ENABLED, mMasterSwitch.isChecked())
                 .putString(PowerMenuConfig.KEY_ORDER, PowerMenuConfig.join(mOrder))
                 .putString(PowerMenuConfig.KEY_DISABLED, PowerMenuConfig.join(disabled))
+                .putInt(PowerMenuConfig.KEY_LONG_PRESS_MS, mLongPressMs)
                 .apply();
     }
 
@@ -168,6 +176,7 @@ public class SettingsActivity extends Activity {
         intent.putExtra(PowerMenuConfig.EXTRA_ENABLED, mMasterSwitch.isChecked());
         intent.putExtra(PowerMenuConfig.EXTRA_ORDER, PowerMenuConfig.join(mOrder));
         intent.putExtra(PowerMenuConfig.EXTRA_DISABLED, PowerMenuConfig.join(disabled));
+        intent.putExtra(PowerMenuConfig.EXTRA_LONG_PRESS_MS, mLongPressMs);
         intent.putExtra(PowerMenuConfig.EXTRA_RESTART, restart);
 
         // Ordered broadcast: SystemUI answers with RESULT_APPLIED, which is how we can tell the
@@ -196,6 +205,9 @@ public class SettingsActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         mContent.addView(buildMasterCard(), margins(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, dp(12)));
+
+        mContent.addView(buildLongPressCard(), margins(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, dp(24)));
 
         TextView header = new TextView(this);
@@ -311,6 +323,82 @@ public class SettingsActivity extends Activity {
         row.addView(mMasterSwitch);
         row.setOnClickListener(v -> mMasterSwitch.toggle());
         return row;
+    }
+
+    /**
+     * How long the power key has to be held before the menu appears.
+     *
+     * <p>Discrete steps rather than a slider over every millisecond: the value is handed to
+     * {@code PhoneWindowManager}'s long-press rule, and steps keep the label readable. "Default"
+     * leaves the framework's own value ({@code config_longPressOnPowerDurationMs}) alone.
+     */
+    private View buildLongPressCard() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(cardBackground());
+        card.setPadding(dp(16), dp(14), dp(16), dp(8));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView title = new TextView(this);
+        title.setText(R.string.settings_long_press);
+        title.setTextSize(16);
+        title.setTextColor(themeColorList(android.R.attr.textColorPrimary));
+        header.addView(title, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        mLongPressValue = new TextView(this);
+        mLongPressValue.setTextSize(14);
+        mLongPressValue.setTextColor(themeColorList(android.R.attr.colorAccent));
+        header.addView(mLongPressValue);
+        card.addView(header);
+
+        mLongPressSeek = new SeekBar(this);
+        mLongPressSeek.setMax(LongPress.PRESETS.length - 1);
+        mLongPressSeek.setProgress(LongPress.presetIndex(mLongPressMs));
+        int accent = themeColor(android.R.attr.colorAccent);
+        mLongPressSeek.setProgressTintList(ColorStateList.valueOf(accent));
+        mLongPressSeek.setThumbTintList(ColorStateList.valueOf(accent));
+        mLongPressSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                mLongPressMs = LongPress.PRESETS[progress];
+                updateLongPressLabel();
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+            }
+        });
+        card.addView(mLongPressSeek, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        updateLongPressLabel();
+        return card;
+    }
+
+    private void updateLongPressLabel() {
+        int ms = mLongPressMs;
+        if (ms > 0) {
+            mLongPressValue.setText(getString(R.string.settings_long_press_ms, ms));
+            return;
+        }
+        int deviceDefault = deviceLongPressMs();
+        mLongPressValue.setText(deviceDefault > 0
+                ? getString(R.string.settings_long_press_default_ms, deviceDefault)
+                : getString(R.string.settings_long_press_default));
+    }
+
+    /** What the framework would use without the module: {@code config_longPressOnPowerDurationMs}. */
+    private int deviceLongPressMs() {
+        return ResourceLookup.integer(getResources(), ResourceLookup.PKG_ANDROID,
+                "config_longPressOnPowerDurationMs", 0);
     }
 
     private void rebuildRows() {

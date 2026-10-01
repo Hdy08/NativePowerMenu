@@ -12,7 +12,8 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * The module's settings: master switch, item order and per-item switches.
+ * The module's settings: master switch, item order, per-item switches and the power long-press
+ * timeout.
  *
  * <p>The settings app owns the preferences the user edits, and pushes a copy to SystemUI over an
  * ordered broadcast; SystemUI persists that copy in its <em>own</em> preferences, so the config
@@ -24,12 +25,14 @@ final class PowerMenuConfig {
     static final String KEY_ENABLED = "enabled";
     static final String KEY_ORDER = "order";
     static final String KEY_DISABLED = "disabled";
+    static final String KEY_LONG_PRESS_MS = "long_press_ms";
 
     /** Settings app -&gt; SystemUI. */
     static final String ACTION_APPLY = "com.nativepowermenu.action.APPLY";
     static final String EXTRA_ENABLED = "enabled";
     static final String EXTRA_ORDER = "order";
     static final String EXTRA_DISABLED = "disabled";
+    static final String EXTRA_LONG_PRESS_MS = "long_press_ms";
     /** {@code true} for "保存并应用" (restart SystemUI), {@code false} for a silent re-sync. */
     static final String EXTRA_RESTART = "restart";
 
@@ -51,11 +54,15 @@ final class PowerMenuConfig {
     final List<String> order;
     /** Keys the user switched off; never contains {@link PowerMenuItems#ALWAYS_ON}. */
     final Set<String> disabled;
+    /** How long the power key has to be held before the menu appears; {@code 0} = leave it alone. */
+    final int longPressMs;
 
-    private PowerMenuConfig(boolean enabled, List<String> order, Set<String> disabled) {
+    private PowerMenuConfig(boolean enabled, List<String> order, Set<String> disabled,
+            int longPressMs) {
         this.enabled = enabled;
         this.order = order;
         this.disabled = disabled;
+        this.longPressMs = longPressMs;
     }
 
     boolean isEnabled(String key) {
@@ -81,6 +88,7 @@ final class PowerMenuConfig {
         return of(prefs.getBoolean(KEY_ENABLED, true),
                 prefs.getString(KEY_ORDER, null),
                 prefs.getString(KEY_DISABLED, null),
+                prefs.getInt(KEY_LONG_PRESS_MS, 0),
                 context.getResources());
     }
 
@@ -97,6 +105,7 @@ final class PowerMenuConfig {
                 intent.getBooleanExtra(EXTRA_ENABLED, true),
                 intent.getStringExtra(EXTRA_ORDER),
                 intent.getStringExtra(EXTRA_DISABLED),
+                intent.getIntExtra(EXTRA_LONG_PRESS_MS, 0),
                 context.getResources());
         SharedPreferences.Editor editor =
                 context.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE).edit();
@@ -105,6 +114,7 @@ final class PowerMenuConfig {
         invalidate();
         ModuleLog.d("config applied: enabled=" + config.enabled
                 + " order=" + config.order + " disabled=" + config.disabled
+                + " longPressMs=" + config.longPressMs
                 + " stored=" + stored);
         return config;
     }
@@ -113,11 +123,13 @@ final class PowerMenuConfig {
         editor.putBoolean(KEY_ENABLED, enabled);
         editor.putString(KEY_ORDER, join(order));
         editor.putString(KEY_DISABLED, join(disabled));
+        editor.putInt(KEY_LONG_PRESS_MS, longPressMs);
     }
 
     // ---------------------------------------------------------------- construction
 
-    static PowerMenuConfig of(boolean enabled, String order, String disabled, Resources res) {
+    static PowerMenuConfig of(boolean enabled, String order, String disabled, int longPressMs,
+            Resources res) {
         List<String> keys = parseKeys(order);
         if (keys.size() < 2) {
             keys = defaultOrder(res);
@@ -126,7 +138,7 @@ final class PowerMenuConfig {
         }
         Set<String> off = new LinkedHashSet<>(parseKeys(disabled));
         off.removeAll(PowerMenuItems.ALWAYS_ON);
-        return new PowerMenuConfig(enabled, keys, off);
+        return new PowerMenuConfig(enabled, keys, off, LongPress.clamp(longPressMs));
     }
 
     /** Fills in any supported key the stored order does not mention, so nothing goes missing. */

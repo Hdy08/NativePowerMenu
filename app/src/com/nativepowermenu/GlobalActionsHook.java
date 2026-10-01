@@ -128,7 +128,7 @@ final class GlobalActionsHook {
     private void installApplyReceiver() {
         Context application = currentApplication();
         if (application != null) {
-            registerApplyReceiver(application);
+            onApplicationReady(application);
             return;
         }
         ModuleLog.d("application not ready yet, the apply receiver will be installed on onCreate");
@@ -137,12 +137,18 @@ final class GlobalActionsHook {
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            registerApplyReceiver((Context) param.thisObject);
+                            onApplicationReady((Context) param.thisObject);
                         }
                     });
         } catch (Throwable t) {
             ModuleLog.e("could not hook Application#onCreate for the apply receiver", t);
         }
+    }
+
+    private void onApplicationReady(Context context) {
+        registerApplyReceiver(context);
+        // Re-assert the stored long-press timeout: it lives in system_server, which outlives us.
+        SystemClient.setLongPressTimeout(PowerMenuConfig.get(context).longPressMs);
     }
 
     private static Context currentApplication() {
@@ -163,11 +169,15 @@ final class GlobalActionsHook {
             BroadcastReceiver receiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context receiverContext, Intent intent) {
-                    if (PowerMenuConfig.apply(receiverContext, intent) == null) {
+                    PowerMenuConfig config = PowerMenuConfig.apply(receiverContext, intent);
+                    if (config == null) {
                         return;
                     }
                     // Confirm delivery so the settings app can tell the user what happened.
                     setResultCode(PowerMenuConfig.RESULT_APPLIED);
+                    // Takes effect immediately - the timeout lives in system_server, so it does not
+                    // have to wait for SystemUI to come back.
+                    SystemClient.setLongPressTimeout(config.longPressMs);
                     // A silent re-sync (sent when the app is opened) only persists the values; the
                     // menu picks them up on the next long press because the cache was invalidated.
                     if (intent.getBooleanExtra(PowerMenuConfig.EXTRA_RESTART, true)) {

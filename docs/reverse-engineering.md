@@ -404,4 +404,45 @@ LSPosed 作用域选择器里 system_server 对应的是包名 `system`（不是
   避让；而且窗口本身是全屏的（否则 `FLAG_DIM_BEHIND` 的遮罩盖不满整屏），所以只能在 inflate 出来的
   根布局上按 inset 加内边距，`ConstraintLayout` 才会把面板居中到安全区里。
 
+## 10. 长按电源键多久才算长按
+
+菜单弹出的入口是 system_server，不是 SystemUI，链路是：
+
+```
+电源键按下
+  └── PhoneWindowManager.interceptKeyBeforeQueueing / interceptKey
+        └── SingleKeyGestureDetector.interceptKey(KeyEvent)
+              ├── mLongPressTimeoutMs = rule.getLongPressTimeoutMs()   // 每条按键规则各自的超时
+              └── 超时后 → PowerKeyRule.onLongPress(eventTime)
+                    └── PhoneWindowManager.powerLongPress(eventTime)
+                          └── behavior == LONG_PRESS_POWER_GLOBAL_ACTIONS(1)
+                                ├── mPhoneWindowManagerExt.getInputExtension().interceptLongPowerPress()
+                                │     （Oplus 扩展；返回 true 就不走 AOSP 那支）
+                                └── showGlobalActions()  ← 本模块替换的入口
+```
+
+`PowerKeyRule`（`PhoneWindowManager` 的内部类）覆写了超时：
+
+```java
+@Override
+long getLongPressTimeoutMs() {
+    if (PhoneWindowManager.this.getResolvedLongPressOnPowerBehavior() == 5) {   // 长按唤起助理
+        return PhoneWindowManager.this.mLongPressOnPowerAssistantTimeoutMs;
+    }
+    return super.getLongPressTimeoutMs();     // = SingleKeyGestureDetector.sDefaultLongPressTimeout
+}
+```
+
+- `sDefaultLongPressTimeout` 是 `SingleKeyGestureDetector.init(Context)` 里从资源读出来的**静态**值，
+  所有按键规则共用；所以改它会影响别的键，模块改成 hook `PowerKeyRule#getLongPressTimeoutMs` 的返回值，
+  只动电源键。
+- 本机（ColorOS 16 / Android 16）实测：`config_longPressOnPowerDurationMs = 500`，
+  `config_veryLongPressTimeout = 3500`（超长按单独一条规则，默认行为 0 = 什么都不做）。上限因此设在
+  3000 ms 以内，避免和超长按叠在一起。
+- 行为值 `1` 才是「弹全局菜单」；`5` 是「长按唤起助理」，那条用 `mLongPressOnPowerAssistantTimeoutMs`，
+  模块不碰。
+- 顺带确认：`powerLongPress()` 里先问 Oplus 的 `interceptLongPowerPress()`，返回 true 时不调用
+  `showGlobalActions()`；设备实测走到了 `showGlobalActions()`（模块的钩子能拦住并弹出 AOSP 菜单），
+  说明 ColorOS 这条扩展没有截胡。
+
 
