@@ -59,10 +59,19 @@ import java.util.Set;
  */
 public class SettingsActivity extends Activity {
 
+    /** The content padding every card uses, so their contents line up. */
+    private static final int CARD_PADDING_DP = 14;
     /** Fixed metrics for the long-press card; wrap_content made it grow to most of a screen. */
     private static final int HEADER_HEIGHT_DP = 36;
     private static final int INPUT_HEIGHT_DP = 36;
     private static final int SEEK_HEIGHT_DP = 40;
+    /**
+     * The header centres a ~22dp line in 36dp, and the slider's thumb does not fill its box either,
+     * so both carry leading of their own. Subtracting it keeps the visible gap above the title and
+     * below the slider the same as in the cards that hold plain text.
+     */
+    private static final int HEADER_SLACK_DP = 7;
+    private static final int SEEK_SLACK_DP = 10;
 
     /** How long the rows around the dragged one take to slide out of the way. */
     private static final long GAP_ANIM_MS = 140L;
@@ -86,6 +95,7 @@ public class SettingsActivity extends Activity {
     private SeekBar mLongPressSeek;
     private EditText mLongPressInput;
     private ImageButton mLongPressReset;
+    private ImageButton mItemsReset;
     private Button mSaveButton;
 
     /** The row currently under the finger, or {@code null} when nothing is being dragged. */
@@ -263,16 +273,16 @@ public class SettingsActivity extends Activity {
         header.addView(headerText, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        ImageButton resetItems = new ImageButton(this);
-        resetItems.setImageResource(R.drawable.ic_restore);
-        resetItems.setImageTintList(themeColorList(android.R.attr.colorAccent));
-        resetItems.setBackground(themeBackground(
+        mItemsReset = new ImageButton(this);
+        mItemsReset.setImageResource(R.drawable.ic_restore);
+        mItemsReset.setImageTintList(themeColorList(android.R.attr.colorAccent));
+        mItemsReset.setBackground(themeBackground(
                 android.R.attr.selectableItemBackgroundBorderless));
-        resetItems.setContentDescription(getString(R.string.settings_items_reset));
-        resetItems.setPadding(dp(4), dp(4), dp(4), dp(4));
-        resetItems.setOnClickListener(v -> resetItems());
+        mItemsReset.setContentDescription(getString(R.string.settings_items_reset));
+        mItemsReset.setPadding(dp(4), dp(4), dp(4), dp(4));
+        mItemsReset.setOnClickListener(v -> resetItems());
         int resetSize = dp(28);
-        header.addView(resetItems, new LinearLayout.LayoutParams(resetSize, resetSize));
+        header.addView(mItemsReset, new LinearLayout.LayoutParams(resetSize, resetSize));
         mContent.addView(header, margins(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(4), 0, 0, dp(8)));
 
@@ -393,8 +403,8 @@ public class SettingsActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setBackground(cardBackground());
-        // Same content padding as the master switch card above it.
-        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        card.setPadding(dp(16), dp(CARD_PADDING_DP - HEADER_SLACK_DP), dp(16),
+                dp(CARD_PADDING_DP - SEEK_SLACK_DP));
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
@@ -520,9 +530,27 @@ public class SettingsActivity extends Activity {
         mOrder.clear();
         mOrder.addAll(PowerMenuConfig.defaultOrder(getResources()));
         mDisabled.clear();
-        mDisabled.add(PowerMenuItems.BOOTLOADER);
-        mDisabled.add(PowerMenuItems.RECOVERY);
+        mDisabled.addAll(defaultDisabled());
         rebuildRows();
+    }
+
+    /** What {@link PowerMenuItems} is switched off out of the box: the two extended entries. */
+    private Set<String> defaultDisabled() {
+        Set<String> disabled = new LinkedHashSet<>();
+        disabled.add(PowerMenuItems.BOOTLOADER);
+        disabled.add(PowerMenuItems.RECOVERY);
+        return disabled;
+    }
+
+    /** Dimmed and disabled while the list already is in its default order and switch state. */
+    private void updateItemsResetState() {
+        if (mItemsReset == null) {
+            return;
+        }
+        boolean isDefault = mOrder.equals(PowerMenuConfig.defaultOrder(getResources()))
+                && mDisabled.equals(defaultDisabled());
+        mItemsReset.setEnabled(!isDefault);
+        mItemsReset.setAlpha(isDefault ? 0.4f : 1f);
     }
 
     /** Back to "let the device decide", which is what the stored {@code 0} means. */
@@ -567,6 +595,7 @@ public class SettingsActivity extends Activity {
             mItemContainer.addView(createItemRow(key));
         }
         updateDividers();
+        updateItemsResetState();
     }
 
     private View createItemRow(String key) {
@@ -611,6 +640,7 @@ public class SettingsActivity extends Activity {
             } else {
                 mDisabled.add(key);
             }
+            updateItemsResetState();
         });
         row.addView(toggle);
 
@@ -824,6 +854,7 @@ public class SettingsActivity extends Activity {
         dragging.setElevation(0f);
         // Brings back the separator that was hidden when the row was picked up.
         updateDividers();
+        updateItemsResetState();
     }
 
     /**
