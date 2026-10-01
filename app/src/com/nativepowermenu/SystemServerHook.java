@@ -1,5 +1,7 @@
 package com.nativepowermenu;
 
+import android.view.KeyEvent;
+
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
@@ -12,11 +14,11 @@ import de.robv.android.xposed.XposedHelpers;
  * {@code StatusBarManagerService.getDisableFlags} is the carrier. The carrier hook only reacts to
  * the module's own magic request codes.
  *
- * <p>The timeout is enforced by hooking
- * {@code com.android.server.policy.PhoneWindowManager$PowerKeyRule#getLongPressTimeoutMs}. That rule
- * is what {@code SingleKeyGestureDetector} asks for the delay before a power-key press turns into a
- * long press, which is the moment {@code powerLongPress()} shows the global actions menu; on this
- * device its default comes from {@code config_longPressOnPowerDurationMs} (500 ms).
+ * <p>The delay before the power menu appears is enforced in two places, because the two Android
+ * paths that can lead there are both live: {@code PowerKeyRule#getLongPressTimeoutMs} (the plain
+ * long press) and {@code SingleKeyGestureDetectorExtImpl#modifyPressTimeout} - ColorOS' own hook,
+ * which hardcodes the power key's <em>very</em>-long-press timeout to 2500 ms and is what actually
+ * shows the menu on this device. See {@link #installVeryLongPressHook()}.
  *
  * <p>{@code com.android.server.*} lives in {@code services.jar}, which may not be loadable yet when
  * modules are first injected, so a failed first attempt is retried from {@code Application#onCreate}.
@@ -33,6 +35,17 @@ final class SystemServerHook {
             "com.android.server.policy.PhoneWindowManager";
     private static final String CLASS_PHONE_WINDOW_MANAGER_EXT =
             "com.android.server.policy.PhoneWindowManagerExtImpl";
+    /**
+     * ColorOS' own hook into {@code SingleKeyGestureDetector}: it rewrites the power key's
+     * very-long-press timeout, and that - not the long-press timeout - is what actually shows the
+     * power menu on this device.
+     */
+    private static final String CLASS_SINGLE_KEY_EXT =
+            "com.android.server.policy.SingleKeyGestureDetectorExtImpl";
+    private static final String METHOD_MODIFY_PRESS_TIMEOUT = "modifyPressTimeout";
+    /** {@code SingleKeyGestureDetectorExtImpl.PRESS_TYPE_VERY_LONG}. */
+    private static final int PRESS_TYPE_VERY_LONG = 1;
+    private static final int KEYCODE_POWER = 26;
 
     /** Written by the carrier hook, read by the key-rule hook; both live in system_server. */
     private static volatile int sLongPressTimeoutMs;
@@ -50,6 +63,7 @@ final class SystemServerHook {
 
     private boolean mCarrierInstalled;
     private boolean mPowerKeyInstalled;
+    private boolean mVeryLongPressInstalled;
     private boolean mTimelineInstalled;
     private int mHookLogs;
     private int mLastApplied = -1;
@@ -79,8 +93,76 @@ final class SystemServerHook {
     private synchronized boolean tryInstall() {
         boolean carrier = mCarrierInstalled || installCarrierHook();
         boolean powerKey = mPowerKeyInstalled || installPowerKeyHook();
+        boolean veryLong = mVeryLongPressInstalled || installVeryLongPressHook();
         installTimelineHooks();
-        return carrier && powerKey;
+        return carrier && powerKey && veryLong;
+    }
+
+    // ---------------------------------------------------------------- the real power menu timer
+
+    /**
+     * The lever that matters on ColorOS.
+     *
+     * <p>{@code SingleKeyGestureDetector.interceptKeyDown()} schedules the very-long-press message
+     * as {@code mSingleKeyGestureDetectorExt.modifyPressTimeout(1, rule.getVeryLongPressTimeoutMs(),
+     * event)}, and ColorOS' implementation returns a hardcoded {@code 2500} for the power key. That
+     * message is what ends up in {@code powerVeryLongPress() -> showGlobalActions()} - the long-press
+     * timeout is never even consulted on this device (verified from the LSPosed log: the key press
+     * and {@code showGlobalActions()} are 2.5 s apart while
+     * {@code PowerKeyRule#getLongPressTimeoutMs()} reports 500 ms and its {@code onLongPress} never
+     * fires).
+     *
+     * <p>So this hook replaces that hardcoded value, and records it: it is the device's real default,
+     * which the settings screen shows.
+     */
+    private boolean installVeryLongPressHook() {
+        Class<?> ext;
+        try {
+            ext = XposedHelpers.findClass(CLASS_SINGLE_KEY_EXT, mClassLoader);
+        } catch (Throwable t) {
+            ModuleLog.w("system_server: " + CLASS_SINGLE_KEY_EXT + " is not loadable yet: " + t);
+            return false;
+        }
+
+        int count = XposedBridge.hookAllMethods(ext, METHOD_MODIFY_PRESS_TIMEOUT, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                try {
+                    int configured = sLongPressTimeoutMs;
+                    if (configured <= 0 || param.args == null || param.args.length != 3
+                            || !(param.args[0] instanceof Integer)
+                            || !(param.args[2] instanceof KeyEvent)) {
+                        return;
+                    }
+                    if ((Integer) param.args[0] != PRESS_TYPE_VERY_LONG
+                            || ((KeyEvent) param.args[2]).getKeyCode() != KEYCODE_POWER) {
+                        return;
+                    }
+                    int deviceValue = 0;
+                    if (param.getResult() instanceof Long) {
+                        deviceValue = (int) (long) (Long) param.getResult();
+                        if (deviceValue > 0 && deviceValue <= 60000) {
+                            sFrameworkTimeoutMs = deviceValue;
+                        }
+                    }
+                    param.setResult((long) configured);
+                    logApplied(deviceValue, configured);
+                } catch (Throwable t) {
+                    // Never let this hurt the input path; the device value stays in place.
+                    ModuleLog.w("system_server: could not apply the timeout: " + t);
+                }
+            }
+        }).size();
+
+        if (count == 0) {
+            ModuleLog.w("system_server: " + METHOD_MODIFY_PRESS_TIMEOUT + " not found on "
+                    + CLASS_SINGLE_KEY_EXT);
+            return false;
+        }
+        mVeryLongPressInstalled = true;
+        ModuleLog.d("system_server: hooked " + count + " " + METHOD_MODIFY_PRESS_TIMEOUT
+                + " method(s) on " + CLASS_SINGLE_KEY_EXT);
+        return true;
     }
 
     // ---------------------------------------------------------------- power key timeline
@@ -100,6 +182,10 @@ final class SystemServerHook {
                 new Class<?>[0]);
         hookOrWarn(CLASS_POWER_KEY_RULE, "onLongPress", "PowerKeyRule.onLongPress", false,
                 new Class<?>[]{long.class});
+        hookOrWarn(CLASS_POWER_KEY_RULE, "onVeryLongPress", "PowerKeyRule.onVeryLongPress", false,
+                new Class<?>[]{long.class});
+        hookOrWarn(CLASS_PHONE_WINDOW_MANAGER, "powerVeryLongPress", "powerVeryLongPress()", false,
+                new Class<?>[0]);
         hookOrWarn(CLASS_PHONE_WINDOW_MANAGER_EXT, "oplusInterceptLongPowerPress",
                 "oplusInterceptLongPowerPress -> ", true, new Class<?>[0]);
     }
@@ -229,15 +315,10 @@ final class SystemServerHook {
                                 sFrameworkTimeoutMs = framework;
                             }
 
+                            // The plain long-press path. Kept because it is the one that fires on
+                            // stock AOSP; on ColorOS the menu comes from the very-long press (see
+                            // installVeryLongPressHook), so this is silent.
                             int configured = sLongPressTimeoutMs;
-                            int applied = configured > 0 ? configured : framework;
-                            logApplied(param.thisObject, framework, applied);
-
-                            // ColorOS routes its power menu through the behavior-5 ("hold for the
-                            // assistant") path, so the assistant's timeout IS this device's power
-                            // menu timeout - overriding it here is the whole point, not a side
-                            // effect. (Stock AOSP would launch the assistant instead; this module
-                            // only exists for ColorOS.)
                             if (configured > 0) {
                                 param.setResult((long) configured);
                             }
@@ -260,33 +341,16 @@ final class SystemServerHook {
     }
 
     /**
-     * {@code PhoneWindowManager.getResolvedLongPressOnPowerBehavior()}: 1 = global actions,
-     * 5 = "hold power for the assistant" (which is how ColorOS reaches its power menu). Logged so a
-     * single power key press in the LSPosed log says exactly which path the device takes.
+     * Logs the value the device would have used and the one the module applied. The first few
+     * presses of every process are always logged - that is what makes "the setting does nothing"
+     * diagnosable from the log alone - and afterwards only when the applied value changes.
      */
-    private int resolvedBehavior(Object powerKeyRule) {
-        try {
-            Object policy = XposedHelpers.getObjectField(powerKeyRule, "this$0");
-            Object behavior = XposedHelpers.callMethod(policy, "getResolvedLongPressOnPowerBehavior");
-            return behavior instanceof Integer ? (Integer) behavior : -1;
-        } catch (Throwable t) {
-            return -1;
-        }
-    }
-
-    /**
-     * Logs what the framework would use and what the module returned. The first few presses of every
-     * process are always logged - that is what makes "the setting does nothing" diagnosable from the
-     * log alone - and afterwards only when the applied value changes, so pressing the power key to
-     * lock the screen does not fill the log.
-     */
-    private void logApplied(Object powerKeyRule, int framework, int applied) {
+    private void logApplied(int deviceValue, int applied) {
         if (mHookLogs >= HOOK_LOG_LIMIT && applied == mLastApplied) {
             return;
         }
         mHookLogs++;
         mLastApplied = applied;
-        ModuleLog.d("power key long press: behavior=" + resolvedBehavior(powerKeyRule)
-                + " framework=" + framework + " ms, applied=" + applied + " ms");
+        ModuleLog.d("power key long press: device=" + deviceValue + " ms, applied=" + applied + " ms");
     }
 }

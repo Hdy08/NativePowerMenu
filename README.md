@@ -80,23 +80,40 @@
 `powerLongPress()` 会先问 Oplus 的 `oplusInterceptLongPowerPress()`，它只在**屏幕已熄灭**时截胡
 （返回 true），亮屏时只做一次振动就放行 —— 所以亮屏下的菜单确实走 AOSP 那条路。
 
-模块挂的是 `com.android.server.policy.PhoneWindowManager$PowerKeyRule#getLongPressTimeoutMs`
-（2.1.2 起**两种情况都替换**，原因见下）。这个钩子只影响电源键，不会动到
-`SingleKeyGestureDetector` 里那份静态默认值 —— 那份是所有按键规则共用的。
+**关键结论：这台设备上的电源菜单不是「长按」弹出来的，而是「超长按」弹出来的**，而且那个超时被
+ColorOS 写死在自己的扩展里：
 
-> **关键：ColorOS 的长按行为是 5（"长按唤起助理"）而不是 1。** 设备上
-> `config_longPressOnPowerBehavior = 5`、`Settings.Global.power_button_long_press` 没设，
-> 所以 `getResolvedLongPressOnPowerBehavior()` 返回 5，`PowerKeyRule.getLongPressTimeoutMs()`
-> 走的是 `mLongPressOnPowerAssistantTimeoutMs` 那一支；而 ColorOS 把这条「助理」链路接到了
-> 自己的关机流程上（`oplusHandleAssistLaunchMode` 里按 `invocation_type == 6` 分流，最后仍然
-> 调用 `showGlobalActions()`，所以模块的钩子能拦住它）。也就是说**这台机器上"助理的超时"就是
-> "电源菜单的超时"**。2.1.1 之前把 behavior 5 当成"真的唤助理"而跳过，所以改了没反应。
+```java
+// SingleKeyGestureDetectorExtImpl（oplus-services.jar）
+public long modifyPressTimeout(int pressType, long veryLongPressTimeout, KeyEvent event) {
+    if (pressType == 1 && event.getKeyCode() == 26) {   // 26 = 电源键
+        return 2500L;                                    // ← 就是这 2.5 秒
+    }
+    return veryLongPressTimeout;
+}
+```
+
+`SingleKeyGestureDetector.interceptKeyDown()` 给「超长按」排消息时，延时要过这一层
+（`modifyPressTimeout(1, rule.getVeryLongPressTimeoutMs(), event)`），于是不管
+`config_veryLongPressTimeout` 是多少，电源键永远是 2500 ms；到点后
+`PowerKeyRule.onVeryLongPress()` → `powerVeryLongPress()` → `showGlobalActions()` 弹菜单。
+而 `PowerKeyRule#getLongPressTimeoutMs()`（普通长按）在这台机器上**根本不会被投递** ——
+日志实测：按键到 `showGlobalActions()` 相隔 2.513 s，`onLongPress`/`powerLongPress` 一次都没出现过。
+
+所以模块（2.1.4 起）挂两个点，任一路径都认这个设置：
+
+| 挂点 | 作用 |
+| --- | --- |
+| `SingleKeyGestureDetectorExtImpl#modifyPressTimeout` | **这台设备真正生效的那个**：把写死的 2500 ms 换成设置值；同时把 2500 记下来当作「设备默认值」 |
+| `PhoneWindowManager$PowerKeyRule#getLongPressTimeoutMs` | 普通长按路径（原生 AOSP 上是这条），一并替换 |
+
+两者都只认「pressType = 超长按 且 keyCode = 电源键」，不影响其它按键。
 
 > **默认值不能只看 `config_longPressOnPowerDurationMs`。** framework-res 里写的是 500 ms，但实测
 > 按住电源键要两秒多菜单才出来，说明真正生效的值另有来源（`Settings.Global` 的
 > `power_button_long_press` / `power_button_long_press_duration_ms` 是一层，ColorOS 自己覆盖的
 > 资源又是一层）。所以模块**不去猜**：system_server 侧记下框架每次真正返回的值，通过有序广播的
-> 结果回传给设置页，卡片上的「默认（xxxx ms）」就是设备实测值。该值要按过一次电源键之后才有
+> 结果回传给设置页，卡片上的「默认（xxxx ms）」就是设备实测值（本机 2500 ms）。该值要按过一次电源键之后才有
 > （只有 system_server 观察得到），在那之前只显示「默认」。
 
 设置里改完点「保存并应用」会立刻下发（不用重启 system_server），可选项是
@@ -119,7 +136,7 @@
 │ 关闭后恢复 ColorOS 默认电源菜单   │
 └──────────────────────────────┘
 ┌──────────────────────────────┐
-│ 长按电源键延迟    默认（实测值）│   0 = 不干预，用系统自己的超时
+│ 长按电源键延迟  默认（2500 ms）│   0 = 不干预，用系统自己的超时
 │ ────────●─────────────────── │   默认 / 150 / 200 / … / 2500 ms
 └──────────────────────────────┘
 电源菜单项
@@ -200,7 +217,9 @@
 | `apply receiver installed` | 「保存并应用」的通道就绪 |
 | `system_server: hooked 1 getDisableFlags method(s)` | **系统侧挂钩成功**，缺这行就是作用域没勾「系统框架」 |
 | `system_server: hooked 1 getLongPressTimeoutMs method(s) on ...PowerKeyRule` | 长按延迟的钩子就位（2.1.0 起） |
-| `power key long press: behavior=5 framework=2500 ms, applied=300 ms` | 按电源键时钩子确实被调用：设备走的是哪条行为、框架自己的超时、模块最终用的值。每进程前 4 次 + 值变化时记录 |
+| `system_server: hooked 1 modifyPressTimeout method(s) on ...SingleKeyGestureDetectorExtImpl` | ColorOS 那个写死 2500 ms 的钩子就位（2.1.4 起，**这台设备靠它生效**） |
+| `power key long press: device=2500 ms, applied=300 ms` | 按电源键时钩子被调用：设备自己会用多久、模块实际返回多久。每进程前几次 + 值变化时记录 |
+| `PowerKeyRule.onVeryLongPress` / `powerVeryLongPress()` / `showGlobalActions()` | 长按链路的时间线，用来确认菜单是哪条路径弹出来的 |
 | `system_server accepted the long-press timeout: N ms (framework's own: M ms)` | 设置页下发成功；`M` 就是设置页显示的「默认」 |
 | `system_server: rebooting to recovery` | 系统进程真的开始重启了 |
 | `no answer from system_server` | 系统侧没响应：作用域没勾「系统框架」，**或者装了新版本之后没重启手机**（系统进程里的 dex 还是旧的） |
