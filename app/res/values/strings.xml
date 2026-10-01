@@ -7,6 +7,7 @@
     <string name="settings_enable">启用模块</string>
     <string name="settings_enable_desc">关闭后恢复 ColorOS 默认电源菜单</string>
     <string name="settings_items_header">电源菜单项</string>
+    <string name="settings_items_reset">恢复默认排序与开关</string>
     <string name="settings_save">保存并应用</string>
     <string name="settings_applied">已应用，系统界面重启中</string>
     <string name="settings_not_applied">未生效：请确认模块已启用</string>

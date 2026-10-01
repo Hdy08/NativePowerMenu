@@ -60,9 +60,9 @@ import java.util.Set;
 public class SettingsActivity extends Activity {
 
     /** Fixed metrics for the long-press card; wrap_content made it grow to most of a screen. */
-    private static final int HEADER_HEIGHT_DP = 44;
-    private static final int INPUT_HEIGHT_DP = 40;
-    private static final int SEEK_HEIGHT_DP = 48;
+    private static final int HEADER_HEIGHT_DP = 36;
+    private static final int INPUT_HEIGHT_DP = 36;
+    private static final int SEEK_HEIGHT_DP = 40;
 
     /** How long the rows around the dragged one take to slide out of the way. */
     private static final long GAP_ANIM_MS = 140L;
@@ -249,13 +249,30 @@ public class SettingsActivity extends Activity {
         mContent.addView(buildLongPressCard(), margins(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, dp(24)));
 
-        TextView header = new TextView(this);
-        header.setText(R.string.settings_items_header);
-        header.setTextSize(13);
-        header.setTypeface(Typeface.DEFAULT_BOLD);
-        header.setAllCaps(true);
-        header.setTextColor(themeColorList(android.R.attr.colorAccent));
-        header.setLetterSpacing(0.06f);
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView headerText = new TextView(this);
+        headerText.setText(R.string.settings_items_header);
+        headerText.setTextSize(13);
+        headerText.setTypeface(Typeface.DEFAULT_BOLD);
+        headerText.setAllCaps(true);
+        headerText.setTextColor(themeColorList(android.R.attr.colorAccent));
+        headerText.setLetterSpacing(0.06f);
+        header.addView(headerText, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        ImageButton resetItems = new ImageButton(this);
+        resetItems.setImageResource(R.drawable.ic_restore);
+        resetItems.setImageTintList(themeColorList(android.R.attr.colorAccent));
+        resetItems.setBackground(themeBackground(
+                android.R.attr.selectableItemBackgroundBorderless));
+        resetItems.setContentDescription(getString(R.string.settings_items_reset));
+        resetItems.setPadding(dp(4), dp(4), dp(4), dp(4));
+        resetItems.setOnClickListener(v -> resetItems());
+        int resetSize = dp(28);
+        header.addView(resetItems, new LinearLayout.LayoutParams(resetSize, resetSize));
         mContent.addView(header, margins(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(4), 0, 0, dp(8)));
 
@@ -376,12 +393,12 @@ public class SettingsActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setBackground(cardBackground());
-        card.setPadding(dp(16), dp(14), dp(16), dp(8));
+        // Same content padding as the master switch card above it.
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setMinimumHeight(dp(HEADER_HEIGHT_DP));
 
         TextView title = new TextView(this);
         title.setText(R.string.settings_long_press);
@@ -398,10 +415,10 @@ public class SettingsActivity extends Activity {
                 android.R.attr.selectableItemBackgroundBorderless));
         mLongPressReset.setContentDescription(getString(R.string.settings_long_press_reset));
         mLongPressReset.setOnClickListener(v -> resetLongPress());
-        mLongPressReset.setPadding(dp(6), dp(6), dp(6), dp(6));
+        mLongPressReset.setPadding(dp(4), dp(4), dp(4), dp(4));
         // Explicit heights everywhere: with wrap_content the theme's edit/seekbar metrics made this
         // card roughly a screen tall (the row ended up vertically centred in it).
-        int button = dp(36);
+        int button = dp(32);
         header.addView(mLongPressReset, new LinearLayout.LayoutParams(button, button));
 
         // Everything left of the value is fixed, so the button stays glued to the title and the
@@ -492,6 +509,20 @@ public class SettingsActivity extends Activity {
             return mLongPressMs;
         }
         return mFrameworkDefaultMs > 0 ? mFrameworkDefaultMs : LongPress.DEVICE_DEFAULT_MS;
+    }
+
+    /**
+     * Back to the module's own defaults for the list: the device's {@code config_globalActionsList}
+     * order (with the two extended entries right after Restart), both extended entries switched off
+     * and everything else on. Nothing is stored until "保存并应用".
+     */
+    private void resetItems() {
+        mOrder.clear();
+        mOrder.addAll(PowerMenuConfig.defaultOrder(getResources()));
+        mDisabled.clear();
+        mDisabled.add(PowerMenuItems.BOOTLOADER);
+        mDisabled.add(PowerMenuItems.RECOVERY);
+        rebuildRows();
     }
 
     /** Back to "let the device decide", which is what the stored {@code 0} means. */
