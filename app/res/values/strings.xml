@@ -12,10 +12,13 @@
     <string name="settings_not_applied">未生效：请确认模块已启用</string>
 
     <!-- Power long-press timeout -->
-    <string name="settings_long_press">长按电源键延迟</string>
+    <string name="settings_long_press">长按弹出菜单延迟</string>
     <string name="settings_long_press_ms">%1$d ms</string>
     <string name="settings_long_press_default">默认</string>
     <string name="settings_long_press_default_ms">默认（%1$d ms）</string>
+    <string name="settings_long_press_range">范围 %1$d – %2$d ms，拖动步进 %3$d ms；也可以直接输入精确数值。</string>
+    <string name="settings_long_press_invalid">请输入 %1$d – %2$d 之间的数值</string>
+    <string name="settings_long_press_reset">恢复默认</string>
 
     <!-- Extended power menu entries -->
     <string name="reboot_bootloader_title">引导模式</string>
