@@ -13,7 +13,7 @@
     <string name="settings_not_applied">未生效：请确认模块已启用</string>
 
     <!-- Power long-press timeout -->
-    <string name="settings_long_press">长按弹出菜单延迟</string>
+    <string name="settings_long_press">电源菜单长按时间</string>
     <string name="settings_long_press_ms">%1$d ms</string>
     <string name="settings_long_press_default">默认</string>
     <string name="settings_long_press_default_ms">默认（%1$d ms）</string>

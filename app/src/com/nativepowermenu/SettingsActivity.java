@@ -405,6 +405,8 @@ public class SettingsActivity extends Activity {
         card.setBackground(cardBackground());
         card.setPadding(dp(16), dp(CARD_PADDING_DP - HEADER_SLACK_DP), dp(16),
                 dp(CARD_PADDING_DP - SEEK_SLACK_DP));
+        card.setClipChildren(false);
+        card.setClipToPadding(false);
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
@@ -478,6 +480,11 @@ public class SettingsActivity extends Activity {
 
         mLongPressSeek = new SeekBar(this);
         mLongPressSeek.setMax(LongPress.steps());
+        // The theme insets the track by the thumb's radius on both sides; dropping that makes the
+        // slider exactly as wide as the row above it (the thumb then overhangs the ends slightly,
+        // so the card has to let it through).
+        mLongPressSeek.setPadding(0, mLongPressSeek.getPaddingTop(), 0,
+                mLongPressSeek.getPaddingBottom());
         int accent = themeColor(android.R.attr.colorAccent);
         mLongPressSeek.setProgressTintList(ColorStateList.valueOf(accent));
         mLongPressSeek.setThumbTintList(ColorStateList.valueOf(accent));
@@ -658,6 +665,7 @@ public class SettingsActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, mDividerHeightPx);
         dividerParams.gravity = Gravity.BOTTOM;
         dividerParams.leftMargin = dp(16);
+        dividerParams.rightMargin = dp(16);
         holder.addView(divider, dividerParams);
 
         attachDragHandle(handle, holder);
