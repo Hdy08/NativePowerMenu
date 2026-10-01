@@ -180,6 +180,8 @@ public long modifyPressTimeout(int pressType, long veryLongPressTimeout, KeyEven
   重启完（SystemUI 每次启动也会重新下发一次，因为 system_server 比它活得久）。
 - 广播由模块自己声明的 signature 权限保护，SystemUI 注册时要求发送方持有该权限，
   别的应用无法通过这个通道重启 SystemUI。
+- `ModuleLog` 走**反射**访问 Xposed API，并且探测不到就直接只写 logcat：设置应用进程里没有
+  Xposed API，直接引用它会以 `NoClassDefFoundError` 闪退（2.2.2 的诊断日志就这么崩过一次）。
 
 ## 环境要求
 
