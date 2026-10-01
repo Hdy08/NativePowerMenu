@@ -768,10 +768,8 @@ public class SettingsActivity extends Activity {
         // above its neighbours (it has no background, so it draws no shadow of its own).
         row.setElevation(dp(6));
         holder.setElevation(dp(8));
-        // The lifted row is a floating card of its own; its separator stays in the empty slot.
-        if (holder.getChildCount() > 1) {
-            holder.getChildAt(1).setVisibility(View.GONE);
-        }
+        // The separator is deliberately left alone: it belongs to the slot, so the slot it was
+        // lifted out of keeps its line like every other one.
         return true;
     }
 
@@ -881,7 +879,7 @@ public class SettingsActivity extends Activity {
             mItemContainer.addView(holder, to);
         }
         clearDragDecorations();
-        // Brings back the separator that was hidden when the row was picked up.
+        // Only the last slot's separator ever changes, and the reorder may have moved it.
         updateDividers();
         updateItemsResetState();
     }
