@@ -72,6 +72,8 @@ public class SettingsActivity extends Activity {
      */
     private static final int HEADER_SLACK_DP = 7;
     private static final int SEEK_SLACK_DP = 10;
+    /** The slider is inset a little at both ends, so it reads as a control rather than a rule. */
+    private static final int SEEK_INSET_DP = 10;
 
     /** How long the rows around the dragged one take to slide out of the way. */
     private static final long GAP_ANIM_MS = 140L;
@@ -480,11 +482,10 @@ public class SettingsActivity extends Activity {
 
         mLongPressSeek = new SeekBar(this);
         mLongPressSeek.setMax(LongPress.steps());
-        // The theme insets the track by the thumb's radius on both sides; dropping that makes the
-        // slider exactly as wide as the row above it (the thumb then overhangs the ends slightly,
-        // so the card has to let it through).
-        mLongPressSeek.setPadding(0, mLongPressSeek.getPaddingTop(), 0,
-                mLongPressSeek.getPaddingBottom());
+        // The theme insets the track by the thumb's radius; a fixed, smaller inset keeps the slider
+        // a touch narrower than the row above instead of much narrower.
+        mLongPressSeek.setPadding(dp(SEEK_INSET_DP), mLongPressSeek.getPaddingTop(),
+                dp(SEEK_INSET_DP), mLongPressSeek.getPaddingBottom());
         int accent = themeColor(android.R.attr.colorAccent);
         mLongPressSeek.setProgressTintList(ColorStateList.valueOf(accent));
         mLongPressSeek.setThumbTintList(ColorStateList.valueOf(accent));
