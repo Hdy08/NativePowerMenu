@@ -1,16 +1,16 @@
 # NativePowerMenu
 
-把 ColorOS / Oplus（一加、OPPO、realme）的电源菜单**恢复成原生 Android（AOSP）样式**的 LSPosed 模块，
+把 ColorOS / Oplus（一加、OPPO、realme）和 HyperOS 的电源菜单**恢复成原生 Android（AOSP）样式**的 LSPosed 模块，
 并在原生菜单上补上「引导模式 / 恢复模式」两个扩展项。
 
 ```
 长按电源键
    └── system_server: PhoneWindowManager
          └── IStatusBarService.showGlobalActions()
-               └── CommandQueue → GlobalActionsComponent.handleShowGlobalActionsMenu()
-                     └── GlobalActions 插件 (GlobalActionsImpl)
-                           ├── ColorOS: OplusGlobalActionsDialog  ←  自绘的 ShutdownView
-                           └── 本模块 : 直接 inflate AOSP 原版的 global_actions_grid_lite
+               └── CommandQueue → GlobalActionsComponent
+                     ├── ColorOS: 在 GlobalActionsImpl 替换厂商菜单
+                     └── HyperOS: 在分发到系统实现或小米插件之前替换菜单
+                           └── 两者均使用设备自带的 AOSP global_actions_grid_lite
 ```
 
 ## 效果
@@ -29,13 +29,13 @@
 - 面板背景 `global_actions_lite_background` + 圆角 `global_actions_corner_radius`
 - 圆形按钮 `global_actions_lite_button` / `global_actions_button_size` / `_button_padding`
 - 文字 14sp + `global_actions_lite_text`，列数取 `power_menu_lite_max_columns`
-- 图标与文案取自 `framework-res`（`ic_lock_power_off`、`ic_restart`、`ic_screenshot`、
-  `ic_lock_lockdown`、`emergency_icon` 以及对应的 `global_action_*` 字符串），自动跟随系统语言
+- 图标和文案默认取自 `framework-res`，自动跟随系统主题和语言。HyperOS 的紧急呼叫和锁定图标
+  优先取自 SystemUI 的 `ic_global_actions_emergency` / `ic_global_actions_lockdown`，与原菜单一致。
 
 > 顺带对比过 HyperOS 提取出来的 `系统界面_16.03.251211.r.apk`：它那份 `global_actions_grid_lite.xml`
 > 与 ColorOS 自带的**逐字节相同**（只差一个 `android:clipChildren`），所以用设备自己那份最准。
 
-菜单项顺序沿用 AOSP 的 `config_globalActionsList`，功能与 AOSP 完全一致：
+菜单项顺序沿用 AOSP 的 `config_globalActionsList`，调用系统原有动作：
 
 | 菜单项 | 行为 | 长按 |
 | --- | --- | --- |
@@ -43,7 +43,7 @@
 | 重启 | `GlobalActionsManager.reboot(false)` | – |
 | 截屏 | `ScreenshotHelper.takeScreenshot(GLOBAL_ACTIONS, …)` | – |
 | 紧急 | `android.intent.action.EMERGENCY_ASSISTANCE` | – |
-| 锁定 | `LockPatternUtils.requireStrongAuth()` + `IWindowManager.lockNow()` | – |
+| 锁定 | 已设置锁屏凭据时要求强认证并立即锁屏；HyperOS 未设置凭据时也可执行普通锁屏。ColorOS 仍沿用原有的显示条件。 | – |
 
 ### 扩展项
 
@@ -80,7 +80,7 @@
 `powerLongPress()` 会先问 Oplus 的 `oplusInterceptLongPowerPress()`，它只在**屏幕已熄灭**时截胡
 （返回 true），亮屏时只做一次振动就放行 —— 所以亮屏下的菜单确实走 AOSP 那条路。
 
-**关键结论：这台设备上的电源菜单不是「长按」弹出来的，而是「超长按」弹出来的**，而且那个超时被
+**实测 ColorOS 的电源菜单不是「长按」弹出来的，而是「超长按」弹出来的**，而且那个超时被
 ColorOS 写死在自己的扩展里：
 
 ```java
@@ -100,22 +100,19 @@ public long modifyPressTimeout(int pressType, long veryLongPressTimeout, KeyEven
 而 `PowerKeyRule#getLongPressTimeoutMs()`（普通长按）在这台机器上**根本不会被投递** ——
 日志实测：按键到 `showGlobalActions()` 相隔 2.513 s，`onLongPress`/`powerLongPress` 一次都没出现过。
 
-所以模块（2.1.4 起）挂两个点，任一路径都认这个设置：
+模块按 ROM 选择电源键挂点：
 
 | 挂点 | 作用 |
 | --- | --- |
-| `SingleKeyGestureDetectorExtImpl#modifyPressTimeout` | **这台设备真正生效的那个**：把写死的 2500 ms 换成设置值；同时把 2500 记下来当作「设备默认值」 |
+| `SingleKeyGestureDetectorExtImpl#modifyPressTimeout` | ColorOS 真正生效的路径：把写死的 2500 ms 换成设置值，并记录 ColorOS 默认值 |
 | `PhoneWindowManager$PowerKeyRule#getLongPressTimeoutMs` | 普通长按路径（原生 AOSP 上是这条），一并替换 |
+| `PowerKeyRule#getMiuiLongPressTimeoutMs`（`com.android.server.input.shortcut.singlekeyrule`） | HyperOS 的独立电源键规则；只覆盖电源菜单，不改变小爱同学等快捷键的计时 |
 
-两者都只认「pressType = 超长按 且 keyCode = 电源键」，不影响其它按键。
+ColorOS 的超长按挂点仍只处理「pressType = 超长按 且 keyCode = 电源键」，不影响其它按键。
 
-> **默认值不能只看 `config_longPressOnPowerDurationMs`。** framework-res 里写的是 500 ms，但实测
-> 按住电源键要两秒多菜单才出来，说明真正生效的值另有来源（`Settings.Global` 的
-> `power_button_long_press` / `power_button_long_press_duration_ms` 是一层，ColorOS 自己覆盖的
-> 资源又是一层）。所以模块**不去猜**：system_server 侧记下框架每次真正返回的值，通过有序广播的
-> 结果回传给设置页，卡片上显示的默认值就是设备实测值（本机 2500 ms）。
-> 这里刻意**不**记录普通长按规则报告的 500 ms —— 那个值在 ColorOS 上根本不参与弹菜单。该值要按过一次电源键之后才有
-> （只有 system_server 观察得到），在那之前只显示「默认」。
+> **设置页的初始默认值：HyperOS 500 ms，ColorOS 2500 ms。** 这只是 system_server 尚未回报前的显示值。
+> 按过电源键后，若收到 system_server 回报，设置页优先使用它；ColorOS 记录的是超长按真正使用的
+> 2500 ms，不是普通长按资源里的 500 ms。
 
 设置里改完点「保存并应用」会立刻下发（不用重启 system_server）。取值范围 **500 – 5000 ms**，
 拖动步进 100 ms；右侧的数值本身就是一个输入框，可以直接敲精确到毫秒的数字（离开输入框或按
@@ -123,10 +120,6 @@ public long modifyPressTimeout(int pressType, long veryLongPressTimeout, KeyEven
 上限 5000 ms 是安全的：ColorOS 在按下 3 秒后开始的只是关机状态记录（`HwShutdownRecord` 写标志位、
 刷数据库），真正强制断电由硬件在更久之后处理。
 
-> 「默认」这个数字取自 system_server 实际观察到的那一个 —— 也就是
-> `modifyPressTimeout` 原本会返回的 2500，**不是**普通长按规则报告的 500 ms。
-> 这一条要装完新版本**重启手机**后才生效：设置页显示的默认值是 system_server 回报的，
-> 而 system_server 里的模块代码只在开机时加载。
 
 > **改到 system_server 的代码必须重启手机才生效。** 模块注入 system_server 是在它启动时完成的，
 > 装完新 APK 只重启「系统界面」不会重新加载系统进程里那份 dex（LSPosed 会为 SystemUI 重新注入，
@@ -140,11 +133,11 @@ public long modifyPressTimeout(int pressType, long veryLongPressTimeout, KeyEven
 
 ```
 ┌──────────────────────────────┐
-│ 启用模块              [ ●——] │   总开关，关掉立刻回到 ColorOS 默认电源菜单
-│ 关闭后恢复 ColorOS 默认电源菜单   │
+│ 启用模块              [ ●——] │   总开关，关闭后恢复 ROM 自带电源菜单
+│ 关闭后恢复系统默认电源菜单       │
 └──────────────────────────────┘
 ┌──────────────────────────────┐
-│ 电源菜单长按时间 ⟳    2500 ms │   ⟳ = 恢复默认（数值等于默认值时也变暗）；数值可直接编辑
+│ 电源菜单长按时间 ⟳     500 ms │   HyperOS 示例；ColorOS 为 2500 ms。⟳ 恢复默认，数值可编辑
 │ ●────────────────────────── │   500 – 5000 ms，步进 100 ms；滑杆两端各内缩 8dp
 └──────────────────────────────┘
 电源菜单项 ⟳                        ⟳ = 恢复默认排序与开关（引导/恢复 关，其余开）；
@@ -239,12 +232,14 @@ public long modifyPressTimeout(int pressType, long veryLongPressTimeout, KeyEven
 
 | 日志 | 含义 |
 | --- | --- |
-| `installed 1 hook(s) on ...GlobalActionsImpl#showGlobalActions` | SystemUI 侧挂钩成功 |
+| `installed 1 hook(s) on ...GlobalActionsImpl#showGlobalActions` | ColorOS 的 SystemUI 挂钩成功 |
+| `HyperOS: hooked ...GlobalActionsComponent#...` | HyperOS 的 SystemUI 挂钩成功 |
 | `apply receiver installed` | 「保存并应用」的通道就绪 |
 | `system_server: hooked 1 getDisableFlags method(s)` | **系统侧挂钩成功**，缺这行就是作用域没勾「系统框架」 |
 | `system_server: hooked 1 getLongPressTimeoutMs method(s) on ...PowerKeyRule` | 长按延迟的钩子就位（2.1.0 起） |
-| `system_server: hooked 1 modifyPressTimeout method(s) on ...SingleKeyGestureDetectorExtImpl` | ColorOS 那个写死 2500 ms 的钩子就位（2.1.4 起，**这台设备靠它生效**） |
-| `power key long press: device=2500 ms, applied=300 ms` | 按电源键时钩子被调用：设备自己会用多久、模块实际返回多久。每进程前几次 + 值变化时记录 |
+| `system_server: hooked 1 modifyPressTimeout method(s) on ...SingleKeyGestureDetectorExtImpl` | ColorOS 那个写死 2500 ms 的钩子就位（2.1.4 起） |
+| `HyperOS: hooked ...PowerKeyRule#getMiuiLongPressTimeoutMs` | HyperOS 电源键规则钩子就位 |
+| `power key long press: device=N ms, applied=M ms` | 按电源键时钩子被调用：设备自己会用多久、模块实际返回多久。每进程前几次 + 值变化时记录 |
 | `PowerKeyRule.onVeryLongPress` / `powerVeryLongPress()` / `showGlobalActions()` | 长按链路的时间线，用来确认菜单是哪条路径弹出来的 |
 | `system_server accepted the long-press timeout: N ms (framework's own: M ms)` | 设置页下发成功；`M` 就是设置页显示的「默认」 |
 | `system_server: rebooting to recovery` | 系统进程真的开始重启了 |
@@ -297,8 +292,7 @@ docs/reverse-engineering.md ColorOS 电源菜单逆向记录
 
 ## 卸载
 
-在 LSPosed 里停用模块并重启 SystemUI 即可；ColorOS 的关机界面从未被改动，只是不再被调用。
-system_server 侧只挂了一个死方法的钩子，停用后不会留下任何东西。
+在 LSPosed 里停用模块并重启手机，使 SystemUI 和 system_server 都不再加载模块。模块不修改 ROM 文件。
 
 ## 许可
 

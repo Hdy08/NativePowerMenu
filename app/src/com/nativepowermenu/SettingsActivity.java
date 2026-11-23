@@ -14,6 +14,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
 import android.view.inputmethod.EditorInfo;
@@ -86,6 +87,8 @@ public class SettingsActivity extends Activity {
 
     private final List<String> mOrder = new ArrayList<>();
     private final Set<String> mDisabled = new LinkedHashSet<>();
+    private final boolean mHyperOs = isHyperOsBuild();
+    private final int mFallbackDefaultMs = LongPress.fallbackDefaultMs(mHyperOs);
 
     private boolean mEnabled = true;
     /** Power long-press timeout in milliseconds; {@code 0} keeps the framework's own value. */
@@ -126,6 +129,15 @@ public class SettingsActivity extends Activity {
     private int mDividerHeightPx;
     /** Whether the system bar insets actually reached {@link #applySystemBarInsets()}. */
     private boolean mInsetsApplied;
+
+    // Public build fields work before LSPosed is enabled; the version check excludes MIUI.
+    private static boolean isHyperOsBuild() {
+        String brand = Build.BRAND;
+        String incremental = Build.VERSION.INCREMENTAL;
+        return ("xiaomi".equalsIgnoreCase(brand) || "redmi".equalsIgnoreCase(brand)
+                || "poco".equalsIgnoreCase(brand))
+                && incremental != null && incremental.matches("OS[0-9]+\\..+");
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -532,9 +544,9 @@ public class SettingsActivity extends Activity {
         return card;
     }
 
-    /** The device's own value: what system_server reported, or ColorOS' hardcoded 2500. */
+    /** The device's own value if known, otherwise the ROM-specific display fallback. */
     private int deviceDefaultMs() {
-        return mFrameworkDefaultMs > 0 ? mFrameworkDefaultMs : LongPress.DEVICE_DEFAULT_MS;
+        return mFrameworkDefaultMs > 0 ? mFrameworkDefaultMs : mFallbackDefaultMs;
     }
 
     /** The number shown in the field: the override, or the device's own value. */
@@ -638,7 +650,7 @@ public class SettingsActivity extends Activity {
         row.addView(handle, new LinearLayout.LayoutParams(dp(40), dp(40)));
 
         ImageView icon = new ImageView(this);
-        Drawable drawable = PowerMenuItems.icon(this, key);
+        Drawable drawable = PowerMenuItems.icon(this, key, mHyperOs);
         if (drawable != null) {
             drawable = drawable.mutate();
             drawable.setTint(themeColor(android.R.attr.textColorPrimary));

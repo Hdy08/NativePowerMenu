@@ -4,8 +4,8 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.content.res.Resources;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.widget.Toast;
@@ -20,15 +20,14 @@ import de.robv.android.xposed.XposedHelpers;
 /**
  * Builds the power-menu entry list from {@link PowerMenuConfig} and executes the selected action.
  *
- * <p>Every action is routed through the same facilities AOSP's own {@code GlobalActionsDialogLite}
- * uses, so the semantics are identical:
+ * <p>System actions use the same facilities as AOSP's {@code GlobalActionsDialogLite}:
  *
  * <ul>
  *   <li>{@code power} -&gt; {@code GlobalActionsManager.shutdown()} (long press: reboot to safe mode)
  *   <li>{@code restart} -&gt; {@code GlobalActionsManager.reboot(false)}
  *   <li>{@code screenshot} -&gt; {@code com.android.internal.util.ScreenshotHelper}
  *   <li>{@code emergency} -&gt; {@code ACTION_EMERGENCY_ASSISTANCE}
- *   <li>{@code lockdown} -&gt; {@code LockPatternUtils.requireStrongAuth()} + {@code IWindowManager.lockNow()}
+ *   <li>{@code lockdown} -&gt; {@code IWindowManager.lockNow()}, requiring strong auth on secure devices
  *   <li>{@code bootloader} / {@code recovery} -&gt; the extended entries, which need the system
  *       process (see {@link SystemBridge}); a tap reboots immediately, with no confirmation step
  * </ul>
@@ -45,17 +44,17 @@ final class PowerMenuActions {
 
     private final Context mContext;
     private final ClassLoader mClassLoader;
-    private final Resources mSysUiRes;
+    private final boolean mHyperOs;
 
     /** {@code com.android.systemui.plugins.GlobalActions.GlobalActionsManager}. */
     private Object mManager;
     /** {@code com.android.systemui.statusbar.policy.KeyguardStateController}. */
     private Object mKeyguardStateController;
 
-    PowerMenuActions(Context context, ClassLoader classLoader) {
+    PowerMenuActions(Context context, ClassLoader classLoader, boolean hyperOs) {
         mContext = context;
         mClassLoader = classLoader;
-        mSysUiRes = context.getResources();
+        mHyperOs = hyperOs;
     }
 
     void setManager(Object manager) {
@@ -84,7 +83,6 @@ final class PowerMenuActions {
         PowerMenuConfig config = PowerMenuConfig.get(mContext);
         boolean telephony = mContext.getPackageManager()
                 .hasSystemFeature(PackageManager.FEATURE_TELEPHONY);
-        boolean secure = isKeyguardSecure();
 
         List<PowerMenuItem> items = new ArrayList<>();
         for (String key : config.order) {
@@ -93,7 +91,7 @@ final class PowerMenuActions {
             }
             switch (key) {
                 case PowerMenuItems.POWER:
-                    items.add(new PowerMenuItem(key, PowerMenuItems.icon(mContext, key),
+                    items.add(new PowerMenuItem(key, PowerMenuItems.icon(mContext, key, mHyperOs),
                             PowerMenuItems.label(mContext, key), false,
                             () -> invokeManager("shutdown"),
                             () -> invokeManager("reboot", Boolean.TRUE)));
@@ -107,9 +105,11 @@ final class PowerMenuActions {
                     }
                     break;
                 case PowerMenuItems.LOCKDOWN:
-                    // AOSP hides Lockdown unless the device has a secure lock screen.
-                    if (deviceProvisioned && secure && isLockdownAllowed()) {
-                        items.add(simple(key, this::lockDown));
+                    // HyperOS can also use this as a regular screen lock without credentials.
+                    // Keep the existing AOSP eligibility checks on ColorOS.
+                    if (deviceProvisioned
+                            && (mHyperOs || (isKeyguardSecure() && isLockdownAllowed()))) {
+                        items.add(simple(key, mHyperOs ? this::lockDownOnHyperOs : this::lockDown));
                     }
                     break;
                 case PowerMenuItems.SCREENSHOT:
@@ -133,7 +133,7 @@ final class PowerMenuActions {
     }
 
     private PowerMenuItem simple(String key, Runnable onPress) {
-        return new PowerMenuItem(key, PowerMenuItems.icon(mContext, key),
+        return new PowerMenuItem(key, PowerMenuItems.icon(mContext, key, mHyperOs),
                 PowerMenuItems.label(mContext, key),
                 PowerMenuItems.EMERGENCY.equals(key),
                 onPress, null);
@@ -262,13 +262,9 @@ final class PowerMenuActions {
             if (utils == null) {
                 return;
             }
-            XposedHelpers.findMethodExact(
-                    utils.getClass(), "requireStrongAuth", int.class, int.class)
-                    .invoke(utils, STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN, USER_ALL);
+            requireStrongAuth(utils);
 
-            Object windowManager = XposedHelpers.callStaticMethod(
-                    XposedHelpers.findClass("android.view.WindowManagerGlobal", mClassLoader),
-                    "getWindowManagerService");
+            Object windowManager = windowManagerService();
             // IWindowManager.lockNow(Bundle) is hidden and the argument is null, so resolve the
             // method by shape instead of by argument type.
             for (Method method : windowManager.getClass().getMethods()) {
@@ -283,7 +279,52 @@ final class PowerMenuActions {
         }
     }
 
+    private void lockDownOnHyperOs() {
+        Object utils = newLockPatternUtils();
+        if (utils != null && isHyperOsKeyguardSecure(utils)) {
+            try {
+                requireStrongAuth(utils);
+            } catch (Throwable t) {
+                // Still request a regular lock if the ROM rejected the strong-auth request.
+                ModuleLog.e("HyperOS: could not require strong auth", t);
+            }
+        }
+        try {
+            Object windowManager = windowManagerService();
+            XposedHelpers.findMethodExact(windowManager.getClass(), "lockNow", Bundle.class)
+                    .invoke(windowManager, (Object) null);
+            ModuleLog.d("HyperOS: requested lockNow");
+        } catch (Throwable t) {
+            ModuleLog.e("HyperOS: lockNow failed", t);
+        }
+    }
+
+    private void requireStrongAuth(Object utils) throws ReflectiveOperationException {
+        XposedHelpers.findMethodExact(utils.getClass(), "requireStrongAuth", int.class, int.class)
+                .invoke(utils, STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN, USER_ALL);
+    }
+
+    private Object windowManagerService() {
+        return XposedHelpers.callStaticMethod(
+                XposedHelpers.findClass("android.view.WindowManagerGlobal", mClassLoader),
+                "getWindowManagerService");
+    }
+
     // ---------------------------------------------------------------- capability probes
+
+    private boolean isHyperOsKeyguardSecure(Object utils) {
+        int userId = currentUserId(-1);
+        if (userId >= 0) {
+            try {
+                return (Boolean) XposedHelpers.findMethodExact(utils.getClass(), "isSecure", int.class)
+                        .invoke(utils, userId);
+            } catch (Throwable t) {
+                ModuleLog.w("HyperOS: could not query the current user's lock credentials", t);
+            }
+        }
+        // If neither query is available, err on the side of requesting strong auth.
+        return Reflect.booleanValue(mKeyguardStateController, "mSecure", "isMethodSecure", true);
+    }
 
     private boolean isKeyguardSecure() {
         // ColorOS only exposes this as KeyguardStateControllerImpl.mSecure; the interface has
@@ -304,7 +345,7 @@ final class PowerMenuActions {
             }
             int state = (Integer) XposedHelpers.findMethodExact(
                     utils.getClass(), "getStrongAuthForUser", int.class)
-                    .invoke(utils, currentUserId());
+                    .invoke(utils, currentUserId(0));
             return state == 0 || state == 4;
         } catch (Throwable t) {
             ModuleLog.w("could not query strong auth state: " + t);
@@ -324,15 +365,15 @@ final class PowerMenuActions {
     }
 
     /** {@code ActivityManager.getCurrentUser()} is hidden in the public SDK. */
-    private int currentUserId() {
+    private int currentUserId(int fallback) {
         try {
             Object userId = XposedHelpers.callStaticMethod(
                     XposedHelpers.findClass("android.app.ActivityManager", mClassLoader),
                     "getCurrentUser");
-            return userId instanceof Integer ? (Integer) userId : 0;
+            return userId instanceof Integer ? (Integer) userId : fallback;
         } catch (Throwable t) {
             ModuleLog.w("could not resolve current user: " + t);
-            return 0;
+            return fallback;
         }
     }
 }

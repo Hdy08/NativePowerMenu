@@ -21,14 +21,15 @@ final class LongPress {
     /** Slider granularity. Exact values can be typed in, so the slider does not have to be fine. */
     static final int STEP_MS = 100;
 
-    /**
-     * What ColorOS hardcodes as the power key's delay ({@code SingleKeyGestureDetectorExtImpl
-     * .modifyPressTimeout} returns 2500 for the power key). Used to position the slider until
-     * system_server reports the value it really observed, which happens on the first key press.
-     */
-    static final int DEVICE_DEFAULT_MS = 2500;
+    private static final int COLOR_OS_DEFAULT_MS = 2500;
+    private static final int HYPER_OS_DEFAULT_MS = 500;
 
     private LongPress() {
+    }
+
+    /** Initial display value, until system_server reports the real timeout. */
+    static int fallbackDefaultMs(boolean hyperOs) {
+        return hyperOs ? HYPER_OS_DEFAULT_MS : COLOR_OS_DEFAULT_MS;
     }
 
     /** {@code 0} (leave the device's own value alone), or a value inside the supported range. */

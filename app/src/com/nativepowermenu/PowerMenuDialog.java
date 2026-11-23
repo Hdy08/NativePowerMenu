@@ -83,7 +83,7 @@ final class PowerMenuDialog {
      * Mirrors {@code GlobalActionsDialogLite.showOrHideDialog()}: a second power long-press while
      * the menu is open closes it again.
      */
-    void toggle(Object manager, Object keyguardStateController, boolean keyguardShowing,
+    boolean toggle(Object manager, Object keyguardStateController, boolean keyguardShowing,
             boolean deviceProvisioned) {
         mActions.setManager(manager);
         mActions.setKeyguardStateController(keyguardStateController);
@@ -91,9 +91,9 @@ final class PowerMenuDialog {
         if (isShowing()) {
             mActions.onShownCompat();
             dismiss();
-            return;
+            return true;
         }
-        show(keyguardShowing, deviceProvisioned);
+        return show(keyguardShowing, deviceProvisioned);
     }
 
     void dismiss() {
@@ -105,18 +105,18 @@ final class PowerMenuDialog {
 
     // ---------------------------------------------------------------- show / hide
 
-    private void show(boolean keyguardShowing, boolean deviceProvisioned) {
+    private boolean show(boolean keyguardShowing, boolean deviceProvisioned) {
         List<PowerMenuItem> items = mActions.createItems(keyguardShowing, deviceProvisioned);
         if (items.isEmpty()) {
             ModuleLog.w("no power menu items available, not showing anything");
-            return;
+            return false;
         }
 
         Context themed = themedContext();
         View content = buildContentView(themed, items);
         if (content == null) {
             ModuleLog.w("could not build the power menu view");
-            return;
+            return false;
         }
 
         Dialog dialog = new Dialog(themed);
@@ -135,10 +135,16 @@ final class PowerMenuDialog {
         }
 
         registerReceiver();
-        dialog.show();
+        try {
+            dialog.show();
+        } catch (RuntimeException | Error e) {
+            unregisterReceiver();
+            throw e;
+        }
         mDialog = dialog;
         applySafeArea(content, dialog);
         mActions.onShownCompat();
+        return true;
     }
 
     /**

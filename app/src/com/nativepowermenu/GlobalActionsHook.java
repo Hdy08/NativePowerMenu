@@ -10,7 +10,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
+import android.provider.Settings;
+import android.util.Pair;
+import android.util.SparseArray;
 
+import java.lang.reflect.Method;
 import java.util.Set;
 
 import de.robv.android.xposed.XC_MethodHook;
@@ -18,35 +22,51 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * Replaces the ColorOS power menu with the AOSP one, and applies settings coming from the app.
+ * Replaces the vendor power menu with the AOSP one and applies settings coming from the app.
  *
  * <p>Injection point: {@code com.android.systemui.globalactions.GlobalActionsImpl#showGlobalActions}
- * - the {@code GlobalActions} plugin that {@code GlobalActionsComponent} calls when the platform
- * asks for the power menu. That method is shared by every ROM because it is part of the SystemUI
- * plugin contract; ColorOS only swapped the dialog behind it.
+ * on ColorOS. HyperOS may load a different implementation from the MIUI plugin APK, so hook the
+ * host {@code GlobalActionsComponent} before it dispatches to either implementation.
  *
- * <p>When the module's master switch is off nothing is swallowed, so the stock ColorOS menu comes
- * back immediately, without a reboot.
+ * <p>When the module's master switch is off nothing is swallowed, so the stock menu comes back
+ * without rebooting the device.
  */
 final class GlobalActionsHook {
 
     private static final String CLASS_GLOBAL_ACTIONS_IMPL =
             "com.android.systemui.globalactions.GlobalActionsImpl";
     private static final String METHOD_SHOW_GLOBAL_ACTIONS = "showGlobalActions";
+    private static final String CLASS_GLOBAL_ACTIONS_COMPONENT =
+            "com.android.systemui.globalactions.GlobalActionsComponent";
+    /** {@code StatusBarManager.DISABLE2_GLOBAL_ACTIONS}. */
+    private static final int DISABLE2_GLOBAL_ACTIONS = 0x8;
 
     /** Delay before killing SystemUI, so the ordered broadcast result reaches the settings app. */
     private static final long RESTART_DELAY_MS = 700L;
 
     private final ClassLoader mClassLoader;
+    private final boolean mHyperOs;
 
     private PowerMenuDialog mDialog;
     private boolean mReceiverInstalled;
 
-    GlobalActionsHook(ClassLoader classLoader) {
+    GlobalActionsHook(ClassLoader classLoader, boolean hyperOs) {
         mClassLoader = classLoader;
+        mHyperOs = hyperOs;
     }
 
     void install() {
+        if (mHyperOs) {
+            if (!installHyperOsHooks()) {
+                return;
+            }
+        } else {
+            installDefaultHook();
+        }
+        installApplyReceiver();
+    }
+
+    private void installDefaultHook() {
         Class<?> impl = XposedHelpers.findClass(CLASS_GLOBAL_ACTIONS_IMPL, mClassLoader);
 
         Set<XC_MethodHook.Unhook> unhooks = XposedBridge.hookAllMethods(
@@ -88,8 +108,72 @@ final class GlobalActionsHook {
             ModuleLog.d("installed " + count + " hook(s) on "
                     + CLASS_GLOBAL_ACTIONS_IMPL + "#" + METHOD_SHOW_GLOBAL_ACTIONS);
         }
+    }
 
-        installApplyReceiver();
+    private boolean installHyperOsHooks() {
+        Class<?> component = XposedHelpers.findClassIfExists(
+                CLASS_GLOBAL_ACTIONS_COMPONENT, mClassLoader);
+        if (component == null) {
+            ModuleLog.w("HyperOS: no GlobalActionsComponent, keeping the stock power menu");
+            return false;
+        }
+        XC_MethodHook hook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                try {
+                    Object manager = param.thisObject;
+                    Object keyguardViewManager = XposedHelpers.getObjectField(
+                            manager, "mStatusBarKeyguardViewManager");
+                    Context context = (Context) XposedHelpers.getObjectField(
+                            keyguardViewManager, "mContext");
+                    if (!PowerMenuConfig.get(context).enabled) {
+                        return;
+                    }
+                    int displayId = (Integer) XposedHelpers.callMethod(context, "getDisplayId");
+                    if (areHyperOsGlobalActionsDisabled(manager, displayId)) {
+                        param.setResult(null);
+                        return;
+                    }
+                    Object keyguardController = XposedHelpers.getObjectField(
+                            keyguardViewManager, "mKeyguardStateController");
+                    boolean keyguardShowing = Reflect.booleanValue(
+                            keyguardController, "mShowing", "isShowing", true);
+                    boolean provisioned = Settings.Global.getInt(context.getContentResolver(),
+                            Settings.Global.DEVICE_PROVISIONED, 0) != 0;
+                    // Suppress vendor dispatch only once the replacement has handled the request.
+                    if (getDialog(context).toggle(
+                            manager, keyguardController, keyguardShowing, provisioned)) {
+                        param.setResult(null);
+                        ModuleLog.d("HyperOS: handled " + param.method.getName()
+                                + " (keyguardShowing=" + keyguardShowing + ")");
+                    }
+                } catch (Throwable t) {
+                    ModuleLog.e("HyperOS: could not show the replacement power menu", t);
+                }
+            }
+        };
+        int count = 0;
+        for (String name : new String[]{
+                "handleShowGlobalActionsMenu", "handleShowOrHideGlobalActionsMenu"}) {
+            Method method = XposedHelpers.findMethodExactIfExists(component, name);
+            if (method != null && method.getReturnType() == void.class) {
+                XposedBridge.hookMethod(method, hook);
+                count++;
+                ModuleLog.d("HyperOS: hooked " + CLASS_GLOBAL_ACTIONS_COMPONENT + "#" + name);
+            }
+        }
+        if (count == 0) {
+            ModuleLog.w("HyperOS: no compatible global actions callback, keeping the stock menu");
+        }
+        return count > 0;
+    }
+
+    private static boolean areHyperOsGlobalActionsDisabled(Object manager, int displayId) {
+        Object commandQueue = XposedHelpers.getObjectField(manager, "mCommandQueue");
+        SparseArray<?> disabled = (SparseArray<?>) XposedHelpers.getObjectField(
+                commandQueue, "mDisplayDisabled");
+        Pair<?, ?> flags = (Pair<?, ?>) disabled.get(displayId);
+        return flags != null && ((Integer) flags.second & DISABLE2_GLOBAL_ACTIONS) != 0;
     }
 
     private void handleShow(Context context, Object globalActionsImpl, Object manager) {
@@ -114,7 +198,7 @@ final class GlobalActionsHook {
     private synchronized PowerMenuDialog getDialog(Context context) {
         if (mDialog == null) {
             mDialog = new PowerMenuDialog(
-                    context, new PowerMenuActions(context, mClassLoader), mClassLoader);
+                    context, new PowerMenuActions(context, mClassLoader, mHyperOs), mClassLoader);
         }
         return mDialog;
     }
@@ -149,7 +233,7 @@ final class GlobalActionsHook {
     private void onApplicationReady(Context context) {
         registerApplyReceiver(context);
         // Re-assert the stored long-press timeout: it lives in system_server, which outlives us.
-        SystemClient.pushLongPressTimeout(PowerMenuConfig.get(context).longPressMs);
+        pushLongPressTimeout(PowerMenuConfig.get(context));
     }
 
     private static Context currentApplication() {
@@ -176,7 +260,7 @@ final class GlobalActionsHook {
                     }
                     // Takes effect immediately - the timeout lives in system_server, so it does not
                     // have to wait for SystemUI to come back.
-                    int frameworkDefault = SystemClient.pushLongPressTimeout(config.longPressMs);
+                    int frameworkDefault = pushLongPressTimeout(config);
                     // Confirm delivery so the settings app can tell the user what happened, and hand
                     // it the timeout the framework itself uses (0 when system_server has not seen a
                     // power key press yet, since only it can observe that value).
@@ -203,6 +287,12 @@ final class GlobalActionsHook {
             mReceiverInstalled = false;
             ModuleLog.e("could not register the apply receiver", t);
         }
+    }
+
+    private int pushLongPressTimeout(PowerMenuConfig config) {
+        // HyperOS's master switch restores both stock dispatch and stock power-key timing.
+        int timeout = mHyperOs && !config.enabled ? 0 : config.longPressMs;
+        return SystemClient.pushLongPressTimeout(timeout);
     }
 
     /** SystemUI is a persistent app: killing it makes the system start it again immediately. */

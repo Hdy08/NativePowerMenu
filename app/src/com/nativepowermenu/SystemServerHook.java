@@ -1,6 +1,10 @@
 package com.nativepowermenu;
 
+import android.content.Context;
+import android.content.pm.PackageManager;
 import android.view.KeyEvent;
+
+import java.lang.reflect.Method;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -14,11 +18,8 @@ import de.robv.android.xposed.XposedHelpers;
  * {@code StatusBarManagerService.getDisableFlags} is the carrier. The carrier hook only reacts to
  * the module's own magic request codes.
  *
- * <p>The delay before the power menu appears is enforced in two places, because the two Android
- * paths that can lead there are both live: {@code PowerKeyRule#getLongPressTimeoutMs} (the plain
- * long press) and {@code SingleKeyGestureDetectorExtImpl#modifyPressTimeout} - ColorOS' own hook,
- * which hardcodes the power key's <em>very</em>-long-press timeout to 2500 ms and is what actually
- * shows the menu on this device. See {@link #installVeryLongPressHook()}.
+ * <p>ColorOS uses {@code SingleKeyGestureDetectorExtImpl#modifyPressTimeout} for the power menu's
+ * very-long press. HyperOS instead registers its own power-key rule for the regular long press.
  *
  * <p>{@code com.android.server.*} lives in {@code services.jar}, which may not be loadable yet when
  * modules are first injected, so a failed first attempt is retried from {@code Application#onCreate}.
@@ -27,8 +28,12 @@ final class SystemServerHook {
 
     private static final String CLASS_STATUS_BAR_MANAGER_SERVICE =
             "com.android.server.statusbar.StatusBarManagerService";
+    /** Permission that the original getDisableFlags implementation enforces. */
+    private static final String STATUS_BAR_PERMISSION = "android.permission.STATUS_BAR";
     private static final String CLASS_POWER_KEY_RULE =
             "com.android.server.policy.PhoneWindowManager$PowerKeyRule";
+    private static final String CLASS_MIUI_POWER_KEY_RULE =
+            "com.android.server.input.shortcut.singlekeyrule.PowerKeyRule";
 
     private static final String METHOD_LONG_PRESS_TIMEOUT = "getLongPressTimeoutMs";
     private static final String CLASS_PHONE_WINDOW_MANAGER =
@@ -57,6 +62,7 @@ final class SystemServerHook {
     private static volatile int sFrameworkTimeoutMs;
 
     private final ClassLoader mClassLoader;
+    private final boolean mHyperOs;
 
     /** How many key presses get logged before only value changes are. */
     private static final int HOOK_LOG_LIMIT = 12;
@@ -68,8 +74,9 @@ final class SystemServerHook {
     private int mHookLogs;
     private int mLastApplied = -1;
 
-    SystemServerHook(ClassLoader classLoader) {
+    SystemServerHook(ClassLoader classLoader, boolean hyperOs) {
         mClassLoader = classLoader;
+        mHyperOs = hyperOs;
     }
 
     void install() {
@@ -92,6 +99,9 @@ final class SystemServerHook {
 
     private synchronized boolean tryInstall() {
         boolean carrier = mCarrierInstalled || installCarrierHook();
+        if (mHyperOs) {
+            return (mPowerKeyInstalled || installHyperOsPowerKeyHook()) && carrier;
+        }
         boolean powerKey = mPowerKeyInstalled || installPowerKeyHook();
         boolean veryLong = mVeryLongPressInstalled || installVeryLongPressHook();
         installTimelineHooks();
@@ -99,6 +109,50 @@ final class SystemServerHook {
     }
 
     // ---------------------------------------------------------------- the real power menu timer
+
+    private boolean installHyperOsPowerKeyHook() {
+        Class<?> rule = XposedHelpers.findClassIfExists(CLASS_MIUI_POWER_KEY_RULE, mClassLoader);
+        if (rule == null) {
+            ModuleLog.w("HyperOS: power-key rule is not loadable, keeping stock timing");
+            return false;
+        }
+        Method timeout = XposedHelpers.findMethodExactIfExists(rule, "getMiuiLongPressTimeoutMs");
+        Method supportsShortcut = XposedHelpers.findMethodExactIfExists(rule, "supportMiuiLongPress");
+        if (timeout == null || timeout.getReturnType() != long.class
+                || supportsShortcut == null || supportsShortcut.getReturnType() != boolean.class) {
+            ModuleLog.w("HyperOS: unrecognized power-key timer, keeping stock timing");
+            return false;
+        }
+        XposedBridge.hookMethod(timeout, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                try {
+                    Object result = param.getResult();
+                    // This rule uses a separate timer for Xiaomi's configured shortcuts (e.g.
+                    // XiaoAI). Only override the timer it returns for global actions.
+                    if (!(result instanceof Long)
+                            || Boolean.TRUE.equals(supportsShortcut.invoke(param.thisObject))) {
+                        return;
+                    }
+                    long deviceValue = (Long) result;
+                    if (deviceValue <= 0 || deviceValue > 60000) {
+                        return;
+                    }
+                    sFrameworkTimeoutMs = (int) deviceValue;
+                    int configured = sLongPressTimeoutMs;
+                    if (configured > 0) {
+                        param.setResult((long) configured);
+                    }
+                    logApplied((int) deviceValue, configured > 0 ? configured : (int) deviceValue);
+                } catch (Throwable t) {
+                    ModuleLog.w("HyperOS: could not apply the power-key timeout", t);
+                }
+            }
+        });
+        mPowerKeyInstalled = true;
+        ModuleLog.d("HyperOS: hooked " + CLASS_MIUI_POWER_KEY_RULE + "#" + timeout.getName());
+        return true;
+    }
 
     /**
      * The lever that matters on ColorOS.
@@ -242,12 +296,24 @@ final class SystemServerHook {
                     protected void beforeHookedMethod(MethodHookParam param) {
                         try {
                             if (param.args == null || param.args.length != 2
+                                    || param.args[0] != null
                                     || !(param.args[1] instanceof Integer)) {
                                 return;
                             }
                             int request = (Integer) param.args[1];
-
                             int timeout = SystemBridge.timeoutFromRequestCode(request);
+                            String reason = SystemBridge.reasonFromRequestCode(request);
+                            if (timeout < 0 && reason == null) {
+                                return;
+                            }
+                            // A before-hook skips the original permission check. Preserve it
+                            // before either changing the timer or scheduling a reboot.
+                            Context context = (Context) XposedHelpers.getObjectField(
+                                    param.thisObject, "mContext");
+                            if (context.checkCallingOrSelfPermission(STATUS_BAR_PERMISSION)
+                                    != PackageManager.PERMISSION_GRANTED) {
+                                return;
+                            }
                             if (timeout >= 0) {
                                 SystemServerHook.sLongPressTimeoutMs =
                                         LongPress.clamp(timeout);
@@ -262,10 +328,6 @@ final class SystemServerHook {
                                 return;
                             }
 
-                            String reason = SystemBridge.reasonFromRequestCode(request);
-                            if (reason == null) {
-                                return;
-                            }
                             // Perform the reboot, then answer: the reply is how SystemUI learns
                             // whether the system side was reachable and whether it worked, instead
                             // of failing silently. IPowerManager#reboot does not block, so the reply

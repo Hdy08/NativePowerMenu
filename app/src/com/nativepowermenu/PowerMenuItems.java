@@ -1,6 +1,7 @@
 package com.nativepowermenu;
 
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 
@@ -70,7 +71,15 @@ final class PowerMenuItems {
         }
     }
 
-    static Drawable icon(Context context, String key) {
+    static Drawable icon(Context context, String key, boolean hyperOs) {
+        if (hyperOs && (EMERGENCY.equals(key) || LOCKDOWN.equals(key))) {
+            // Use the names from the stock GlobalActionsDialogLite, which can be aliases.
+            Drawable stock = systemUiIcon(context, EMERGENCY.equals(key)
+                    ? "ic_global_actions_emergency" : "ic_global_actions_lockdown");
+            if (stock != null) {
+                return stock;
+            }
+        }
         try {
             switch (key) {
                 case BOOTLOADER:
@@ -78,10 +87,31 @@ final class PowerMenuItems {
                 case RECOVERY:
                     return moduleDrawable(context, R.drawable.ic_recovery);
                 default:
-                    int id = frameworkIconId(context.getResources(), key);
+                    Resources res = context.getResources();
+                    int id = frameworkIconId(res, key);
+                    if (id == 0 && hyperOs && LOCKDOWN.equals(key)) {
+                        id = ResourceLookup.drawableId(
+                                res, ResourceLookup.PKG_ANDROID, "ic_lock_lockdown_round");
+                        if (id == 0) {
+                            id = android.R.drawable.ic_lock_lock;
+                        }
+                    }
                     return id != 0 ? context.getDrawable(id) : null;
             }
         } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static Drawable systemUiIcon(Context context, String name) {
+        String pkg = ResourceLookup.PKG_SYSTEMUI;
+        try {
+            // The settings preview needs SystemUI's resource table, but not its code.
+            Context owner = pkg.equals(context.getPackageName())
+                    ? context : context.createPackageContext(pkg, 0);
+            int id = ResourceLookup.drawableId(owner.getResources(), pkg, name);
+            return id != 0 ? owner.getDrawable(id) : null;
+        } catch (PackageManager.NameNotFoundException | RuntimeException ignored) {
             return null;
         }
     }

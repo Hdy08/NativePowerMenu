@@ -9,9 +9,9 @@ import de.robv.android.xposed.XposedHelpers;
  * The two ends of the module's private channel between SystemUI and system_server.
  *
  * <p><b>Why a channel at all.</b> {@code PowerManagerService.reboot()} enforces
- * {@code android.permission.REBOOT} (and {@code RECOVERY} for the recovery reason), and SystemUI
- * holds neither - it does not even request them. Only the system process may reboot with a custom
- * reason, which is exactly how ColorOS' own {@code StatusBarManagerService.reboot(boolean)} works.
+ * {@code android.permission.REBOOT} (and {@code RECOVERY} for the recovery reason), which
+ * ColorOS's SystemUI does not hold. Use the system process on both ROMs, as ColorOS's own
+ * {@code StatusBarManagerService.reboot(boolean)} does.
  * The long-press timeout has the same shape: it lives in {@code PhoneWindowManager}, which only
  * system_server can reach.
  *

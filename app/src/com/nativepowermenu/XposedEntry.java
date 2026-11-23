@@ -2,6 +2,7 @@ package com.nativepowermenu;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.IXposedHookZygoteInit;
+import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
@@ -33,7 +34,7 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
         if (TARGET_PACKAGE.equals(lpparam.packageName)) {
             try {
-                new GlobalActionsHook(lpparam.classLoader).install();
+                new GlobalActionsHook(lpparam.classLoader, isHyperOs()).install();
             } catch (Throwable t) {
                 ModuleLog.e("failed to install the SystemUI hooks", t);
             }
@@ -41,10 +42,21 @@ public class XposedEntry implements IXposedHookLoadPackage, IXposedHookZygoteIni
         }
         if (SYSTEM_SERVER_PACKAGE.equals(lpparam.packageName)) {
             try {
-                new SystemServerHook(lpparam.classLoader).install();
+                new SystemServerHook(lpparam.classLoader, isHyperOs()).install();
             } catch (Throwable t) {
                 ModuleLog.e("failed to install the system_server hooks", t);
             }
+        }
+    }
+
+    private static boolean isHyperOs() {
+        try {
+            Class<?> properties = XposedHelpers.findClass("android.os.SystemProperties", null);
+            Object version = XposedHelpers.callStaticMethod(properties, "get", "ro.mi.os.version.name");
+            return version instanceof String && !((String) version).isEmpty();
+        } catch (Throwable t) {
+            ModuleLog.w("could not read the HyperOS version property", t);
+            return false;
         }
     }
 }
