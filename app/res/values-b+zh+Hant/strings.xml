@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">原生電源選單</string>
+    <string name="module_description">將 ColorOS / HyperOS 的電源選單替換為原生 Android (AOSP) 樣式，並支援引導模式、復原模式與長按延遲設定。</string>
+
+    <string name="settings_enable">啟用模組</string>
+    <string name="settings_enable_desc">關閉後還原系統預設電源選單</string>
+    <string name="settings_items_header">電源選單項目</string>
+    <string name="settings_items_reset">還原預設排序與開關</string>
+    <string name="settings_save">儲存並套用</string>
+    <string name="settings_applied">已套用，系統介面重新啟動中</string>
+    <string name="settings_not_applied">未生效：請確認模組已啟用</string>
+
+    <string name="settings_long_press">電源選單長按時間</string>
+    <string name="settings_long_press_ms">%1$d ms</string>
+    <string name="settings_long_press_default">預設</string>
+    <string name="settings_long_press_default_ms">預設（%1$d ms）</string>
+    <string name="settings_long_press_invalid">請輸入 %1$d 至 %2$d 之間的數值</string>
+    <string name="settings_long_press_reset">還原預設</string>
+    <string name="settings_long_press_unit">ms</string>
+
+    <string name="power_off_title">關機</string>
+    <string name="restart_title">重新啟動</string>
+    <string name="screenshot_title">螢幕截圖</string>
+    <string name="lockdown_title">鎖定</string>
+    <string name="emergency_call_title">緊急呼叫</string>
+    <string name="reboot_bootloader_title">引導模式</string>
+    <string name="reboot_recovery_title">復原模式</string>
+    <string name="reboot_unavailable">重新啟動失敗：請勾選「系統」作用範圍</string>
+</resources>

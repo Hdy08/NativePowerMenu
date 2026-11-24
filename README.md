@@ -24,13 +24,14 @@
 `GlobalActionsLayoutLite.onUpdateList()` 那样，把每个 `GlobalActionsItem` 交给
 `ConstraintLayout` 的 `Flow` 排布。
 
-因此布局、`GlobalActionsItem` 的按压反馈、dimen、颜色、主题**全部来自设备本身**：
+因此菜单使用 AOSP `GlobalActionsLite` 主题、布局和 item 布局。按钮尺寸、圆角、阴影、状态动画和涟漪反馈沿用这套资源；颜色统一使用 AOSP Lite 调色板，避免 HyperOS 的资源覆写造成两系统外观不一致。图标按 AOSP `GlobalActionsItem` 使用 `CENTER_CROP`：
 
 - 面板背景 `global_actions_lite_background` + 圆角 `global_actions_corner_radius`
 - 圆形按钮 `global_actions_lite_button` / `global_actions_button_size` / `_button_padding`
 - 文字 14sp + `global_actions_lite_text`，列数取 `power_menu_lite_max_columns`
-- 图标和文案默认取自 `framework-res`，自动跟随系统主题和语言。HyperOS 的紧急呼叫和锁定图标
-  优先取自 SystemUI 的 `ic_global_actions_emergency` / `ic_global_actions_lockdown`，与原菜单一致。
+- 系统菜单图标和文案优先取自 SystemUI 的 AOSP 资源并跟随系统语言；紧急项中文按要求显示
+  「紧急呼叫」，图标使用 AOSP 实心星号资源。
+- ColorOS 和 HyperOS 的菜单入场、退场统一按 AOSP `GlobalActionsDialogLite` 实现：读取框架动画时长与位移资源，按显示旋转选择 X/Y 轴，在菜单布局上执行标准插值的淡入/位移，不做缩放。
 
 > 顺带对比过 HyperOS 提取出来的 `系统界面_16.03.251211.r.apk`：它那份 `global_actions_grid_lite.xml`
 > 与 ColorOS 自带的**逐字节相同**（只差一个 `android:clipChildren`），所以用设备自己那份最准。
@@ -176,9 +177,9 @@ ColorOS 的超长按挂点仍只处理「pressType = 超长按 且 keyCode = 电
 - **长按卡片的高度是写死的**（标题行 36dp / 输入框 36dp / 滑杆 40dp）：这台机器的主题下
   `wrap_content` 会把这张卡片撑到接近一整屏（标题行被垂直居中、滑杆被挤出可视区），
   而且 EditText 的宽度改成随内容收缩，下划线才会跟着数字长度走。
-- **避让系统栏**：模块 `targetSdk 36`，Android 强制 edge-to-edge，设置页把系统栏 + 挖孔 inset
-  加进内容内边距；电源菜单那个窗口是全屏、且层级在状态栏之上（`TYPE_STATUS_BAR_SUB_PANEL`），
-  系统不会替它避让，同样按 inset 加内边距，保证菜单顶部元素不会跑进状态栏。
+- **避让系统栏**：模块 `targetSdk 36`，Android 强制 edge-to-edge，设置页按系统栏 + 挖孔 inset
+  留出内容边距；电源菜单使用 Dialog 默认应用窗口类型，不改成需要系统特权的 overlay 类型，
+  并按 AOSP 全屏布局与 Insets 规则显示。
 - **保存并应用**：写入设置 → 有序广播推给 SystemUI → SystemUI 存盘并重启自己（它是 persistent 应用，
   被系统立刻拉回）。广播的结果码用来判断是否真的送达，没送到会提示「未生效：请确认模块已启用」。
 - 打开设置页时会静默重推一次已保存的值（不重启），因此「先配置、后启用模块」也不会丢配置。

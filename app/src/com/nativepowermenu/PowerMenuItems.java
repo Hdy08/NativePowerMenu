@@ -50,7 +50,7 @@ final class PowerMenuItems {
 
     // ---------------------------------------------------------------- icons
 
-    /** Framework drawable id, or 0 for the module-local icons and unknown keys. */
+    /** Framework drawable id, or 0 for the module-local extension icons and unknown keys. */
     static int frameworkIconId(Resources res, String key) {
         switch (key) {
             case POWER:
@@ -72,21 +72,35 @@ final class PowerMenuItems {
     }
 
     static Drawable icon(Context context, String key, boolean hyperOs) {
-        if (hyperOs && (EMERGENCY.equals(key) || LOCKDOWN.equals(key))) {
-            // Use the names from the stock GlobalActionsDialogLite, which can be aliases.
-            Drawable stock = systemUiIcon(context, EMERGENCY.equals(key)
-                    ? "ic_global_actions_emergency" : "ic_global_actions_lockdown");
-            if (stock != null) {
-                return stock;
-            }
+        String aospName = aospIconName(key);
+        Drawable stock = aospName == null ? null : systemUiIcon(context, aospName);
+        if (stock != null) {
+            return stock;
         }
         try {
             switch (key) {
+                case EMERGENCY:
+                    if (hyperOs) {
+                        Drawable hyperOsEmergency = systemUiIcon(
+                                context, "ic_global_actions_emergency");
+                        if (hyperOsEmergency != null) {
+                            return hyperOsEmergency;
+                        }
+                    }
+                    int emergencyId = frameworkIconId(context.getResources(), key);
+                    return emergencyId != 0 ? context.getDrawable(emergencyId) : null;
                 case BOOTLOADER:
                     return moduleDrawable(context, R.drawable.ic_bootloader);
                 case RECOVERY:
                     return moduleDrawable(context, R.drawable.ic_recovery);
                 default:
+                    if (hyperOs && LOCKDOWN.equals(key)) {
+                        Drawable hyperOsLockdown = systemUiIcon(
+                                context, "ic_global_actions_lockdown");
+                        if (hyperOsLockdown != null) {
+                            return hyperOsLockdown;
+                        }
+                    }
                     Resources res = context.getResources();
                     int id = frameworkIconId(res, key);
                     if (id == 0 && hyperOs && LOCKDOWN.equals(key)) {
@@ -103,17 +117,40 @@ final class PowerMenuItems {
         }
     }
 
+    private static String aospIconName(String key) {
+        switch (key) {
+            case POWER:
+                return "ic_lock_power_off";
+            case RESTART:
+                return "ic_restart";
+            case SCREENSHOT:
+                return "ic_screenshot";
+            case EMERGENCY:
+                return "ic_emergency_star";
+            case LOCKDOWN:
+                return "ic_lock_lockdown";
+            default:
+                return null;
+        }
+    }
+
     private static Drawable systemUiIcon(Context context, String name) {
         String pkg = ResourceLookup.PKG_SYSTEMUI;
         try {
             // The settings preview needs SystemUI's resource table, but not its code.
-            Context owner = pkg.equals(context.getPackageName())
-                    ? context : context.createPackageContext(pkg, 0);
+            Context owner = systemUiContext(context);
             int id = ResourceLookup.drawableId(owner.getResources(), pkg, name);
             return id != 0 ? owner.getDrawable(id) : null;
         } catch (PackageManager.NameNotFoundException | RuntimeException ignored) {
             return null;
         }
+    }
+
+    private static Context systemUiContext(Context context)
+            throws PackageManager.NameNotFoundException {
+        String pkg = ResourceLookup.PKG_SYSTEMUI;
+        return pkg.equals(context.getPackageName())
+                ? context : context.createPackageContext(pkg, 0);
     }
 
     /**
@@ -136,29 +173,23 @@ final class PowerMenuItems {
 
     // ---------------------------------------------------------------- text
 
-    /** Menu label, from framework-res so it follows the system language. */
+    /** Menu labels from the module resources so vendor SystemUI fallbacks cannot leak English. */
     static CharSequence label(Context context, String key) {
-        Resources res = context.getResources();
         switch (key) {
             case POWER:
-                return ResourceLookup.string(res, ResourceLookup.PKG_ANDROID,
-                        "global_action_power_off", "Power off");
+                return ModuleResources.string(context, R.string.power_off_title, "关机");
             case RESTART:
-                return ResourceLookup.string(res, ResourceLookup.PKG_ANDROID,
-                        "global_action_restart", "Restart");
+                return ModuleResources.string(context, R.string.restart_title, "重启");
             case SCREENSHOT:
-                return ResourceLookup.string(res, ResourceLookup.PKG_ANDROID,
-                        "global_action_screenshot", "Screenshot");
+                return ModuleResources.string(context, R.string.screenshot_title, "截屏");
             case EMERGENCY:
-                return ResourceLookup.string(res, ResourceLookup.PKG_ANDROID,
-                        "global_action_emergency", "Emergency");
+                return ModuleResources.string(context, R.string.emergency_call_title, "紧急呼叫");
             case LOCKDOWN:
-                return ResourceLookup.string(res, ResourceLookup.PKG_ANDROID,
-                        "global_action_lockdown", "Lockdown");
+                return ModuleResources.string(context, R.string.lockdown_title, "锁定");
             case BOOTLOADER:
-                return ModuleResources.string(context, R.string.reboot_bootloader_title, "Bootloader");
+                return ModuleResources.string(context, R.string.reboot_bootloader_title, "引导模式");
             case RECOVERY:
-                return ModuleResources.string(context, R.string.reboot_recovery_title, "Recovery");
+                return ModuleResources.string(context, R.string.reboot_recovery_title, "恢复模式");
             default:
                 return key;
         }

@@ -9,8 +9,7 @@ import android.graphics.drawable.Drawable;
 /**
  * Access to the module's own resources from inside the SystemUI process.
  *
- * <p>The power menu itself draws only with the device's resources, so the module APK's resources are
- * needed for just two things: the labels of the extended entries and their icons.
+ * <p>Loads the module's labels and extension-entry icons.
  *
  * <p>Two ways in, in order of preference: a package context for the module APK (plain Android, no
  * Xposed magic) and {@code XModuleResources} (which re-points the module's ids at the host
@@ -42,7 +41,7 @@ final class ModuleResources {
             sResources = fromXModuleResources(hostContext);
         }
         if (sResources == null) {
-            ModuleLog.w("module resources are unavailable, extended entries fall back to plain text");
+            ModuleLog.w("module resources are unavailable, using resource fallbacks");
         }
         return sResources;
     }

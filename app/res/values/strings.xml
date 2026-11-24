@@ -21,6 +21,13 @@
     <string name="settings_long_press_reset">恢复默认</string>
     <string name="settings_long_press_unit">ms</string>
 
+    <!-- Power menu item labels -->
+    <string name="power_off_title">关机</string>
+    <string name="restart_title">重启</string>
+    <string name="screenshot_title">截屏</string>
+    <string name="lockdown_title">锁定</string>
+    <string name="emergency_call_title">紧急呼叫</string>
+
     <!-- Extended power menu entries -->
     <string name="reboot_bootloader_title">引导模式</string>
     <string name="reboot_recovery_title">恢复模式</string>

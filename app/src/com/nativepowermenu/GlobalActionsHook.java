@@ -89,11 +89,13 @@ final class GlobalActionsHook {
                                 param.setResult(null);
                                 return;
                             }
-                            // Never let the vendor implementation run: it would inflate the ColorOS
-                            // shutdown view. Swallow it first so a crash in our code cannot fall
-                            // back to the unwanted UI.
-                            param.setResult(null);
-                            handleShow(context, param.thisObject, param.args[0]);
+                            // Suppress the vendor dialog only after the AOSP layout was shown.
+                            // If the ROM drops that layout, preserve its stock menu rather than
+                            // drawing a non-AOSP approximation or leaving the power key inert.
+                            if (handleShow(context, param.thisObject, param.args[0])) {
+                                param.setResult(null);
+                                ModuleLog.d("ColorOS: replacement power menu shown");
+                            }
                         } catch (Throwable t) {
                             ModuleLog.e("handling showGlobalActions failed", t);
                         }
@@ -176,7 +178,7 @@ final class GlobalActionsHook {
         return flags != null && ((Integer) flags.second & DISABLE2_GLOBAL_ACTIONS) != 0;
     }
 
-    private void handleShow(Context context, Object globalActionsImpl, Object manager) {
+    private boolean handleShow(Context context, Object globalActionsImpl, Object manager) {
         Object keyguardController = XposedHelpers.getObjectField(
                 globalActionsImpl, "mKeyguardStateController");
         Object provisionController = XposedHelpers.getObjectField(
@@ -192,13 +194,14 @@ final class GlobalActionsHook {
         ModuleLog.d("power menu requested (keyguardShowing=" + keyguardShowing
                 + ", deviceProvisioned=" + deviceProvisioned + ")");
 
-        getDialog(context).toggle(manager, keyguardController, keyguardShowing, deviceProvisioned);
+        return getDialog(context).toggle(
+                manager, keyguardController, keyguardShowing, deviceProvisioned);
     }
 
     private synchronized PowerMenuDialog getDialog(Context context) {
         if (mDialog == null) {
-            mDialog = new PowerMenuDialog(
-                    context, new PowerMenuActions(context, mClassLoader, mHyperOs), mClassLoader);
+            mDialog = new PowerMenuDialog(context,
+                    new PowerMenuActions(context, mClassLoader, mHyperOs));
         }
         return mDialog;
     }

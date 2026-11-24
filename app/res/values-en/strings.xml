@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Native Power Menu</string>
+    <string name="module_description">Restore the native Android (AOSP) power menu on ColorOS / HyperOS, with bootloader, recovery, and long-press delay options.</string>
+
+    <string name="settings_enable">Enable module</string>
+    <string name="settings_enable_desc">Turn off to restore the system power menu</string>
+    <string name="settings_items_header">Power menu items</string>
+    <string name="settings_items_reset">Restore default order and switches</string>
+    <string name="settings_save">Save and apply</string>
+    <string name="settings_applied">Applied; restarting System UI</string>
+    <string name="settings_not_applied">Not applied: make sure the module is enabled</string>
+
+    <string name="settings_long_press">Power menu long-press duration</string>
+    <string name="settings_long_press_ms">%1$d ms</string>
+    <string name="settings_long_press_default">Default</string>
+    <string name="settings_long_press_default_ms">Default (%1$d ms)</string>
+    <string name="settings_long_press_invalid">Enter a value between %1$d and %2$d</string>
+    <string name="settings_long_press_reset">Restore default</string>
+    <string name="settings_long_press_unit">ms</string>
+
+    <string name="power_off_title">Power off</string>
+    <string name="restart_title">Restart</string>
+    <string name="screenshot_title">Screenshot</string>
+    <string name="lockdown_title">Lockdown</string>
+    <string name="emergency_call_title">Emergency call</string>
+    <string name="reboot_bootloader_title">Bootloader</string>
+    <string name="reboot_recovery_title">Recovery</string>
+    <string name="reboot_unavailable">Reboot failed: select the “system” scope</string>
+</resources>

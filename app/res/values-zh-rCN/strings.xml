@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">原生电源菜单</string>
+    <string name="module_description">把 ColorOS / HyperOS 的电源菜单替换回原生 Android (AOSP) 样式，并支持引导模式、恢复模式和长按延迟设置。</string>
+
+    <!-- Settings screen -->
+    <string name="settings_enable">启用模块</string>
+    <string name="settings_enable_desc">关闭后恢复系统默认电源菜单</string>
+    <string name="settings_items_header">电源菜单项</string>
+    <string name="settings_items_reset">恢复默认排序与开关</string>
+    <string name="settings_save">保存并应用</string>
+    <string name="settings_applied">已应用，系统界面重启中</string>
+    <string name="settings_not_applied">未生效：请确认模块已启用</string>
+
+    <!-- Power long-press timeout -->
+    <string name="settings_long_press">电源菜单长按时间</string>
+    <string name="settings_long_press_ms">%1$d ms</string>
+    <string name="settings_long_press_default">默认</string>
+    <string name="settings_long_press_default_ms">默认（%1$d ms）</string>
+    <string name="settings_long_press_invalid">请输入 %1$d – %2$d 之间的数值</string>
+    <string name="settings_long_press_reset">恢复默认</string>
+    <string name="settings_long_press_unit">ms</string>
+
+    <!-- Power menu item labels -->
+    <string name="power_off_title">关机</string>
+    <string name="restart_title">重启</string>
+    <string name="screenshot_title">截屏</string>
+    <string name="lockdown_title">锁定</string>
+    <string name="emergency_call_title">紧急呼叫</string>
+
+    <!-- Extended power menu entries -->
+    <string name="reboot_bootloader_title">引导模式</string>
+    <string name="reboot_recovery_title">恢复模式</string>
+    <string name="reboot_unavailable">重启失败：请勾选「系统」作用域</string>
+</resources>
